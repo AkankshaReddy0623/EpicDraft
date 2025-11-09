@@ -30,11 +30,15 @@ export default function Room() {
   useEffect(() => {
     if (!roomId || !user) return
 
-    setPresence(roomId, user.id, user.name, user.avatar)
+    setPresence(roomId, user.id, user.name, user.avatar).catch(err => {
+      console.warn('Failed to set presence:', err)
+    })
 
     return () => {
       if (roomId && user) {
-        removePresence(roomId, user.id)
+        removePresence(roomId, user.id).catch(err => {
+          console.warn('Failed to remove presence:', err)
+        })
       }
     }
   }, [roomId, user])
@@ -152,13 +156,20 @@ export default function Room() {
       const pointsEarned = isPlotTwist ? 10 : 5
       const xpEarned = isPlotTwist ? 15 : 10
       
-      const oldLevel = user.level
-      await addPoints(pointsEarned)
-      await addXP(xpEarned)
-      await updateStreak()
+      const oldLevel = user.level || 1
+      const currentXP = user.xp || 0
+      
+      try {
+        await addPoints(pointsEarned)
+        await addXP(xpEarned)
+        await updateStreak()
+      } catch (pointsError) {
+        console.warn('Failed to update points/XP:', pointsError)
+        // Continue anyway - node was saved
+      }
 
       // Check if leveled up
-      const newLevel = Math.floor((user.xp + xpEarned) / 100) + 1
+      const newLevel = Math.floor((currentXP + xpEarned) / 100) + 1
       if (newLevel > oldLevel) {
         setShowAchievement({
           title: `Level Up!`,
@@ -178,7 +189,8 @@ export default function Room() {
       setNodeContent('')
       setSelectedParentId(null)
     } catch (err: any) {
-      setError(err.message || 'Failed to save node')
+      console.error('Error saving node:', err)
+      setError(err.message || 'Failed to save node. Please try again.')
     } finally {
       setSaving(false)
     }
@@ -187,7 +199,7 @@ export default function Room() {
   const handleVote = async (nodeId: string) => {
     if (!user || !roomId) return
     try {
-      await voteNode(nodeId, user.id, roomId)
+      await voteNode(nodeId, user.id)
     } catch (err: any) {
       setError(err.message || 'Failed to vote')
     }

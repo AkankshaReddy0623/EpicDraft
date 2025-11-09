@@ -4,6 +4,9 @@ import { auth } from '../config/firebase'
 import { getUserData, setUserData, updateUserPoints, updateUserXP } from '../services/userService'
 import { User, PowerItem, InventoryItem, Quest, Badge, UserStats, SpecializationType } from '../types'
 
+// Check if auth is properly initialized
+const isAuthInitialized = auth && typeof auth === 'object' && 'app' in auth
+
 interface AppContextType {
   user: User | null
   firebaseUser: FirebaseUser | null
@@ -68,71 +71,182 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Listen to auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      setFirebaseUser(firebaseUser)
-      
-      if (firebaseUser) {
-        // Load user data from Firestore
-        const userData = await getUserData(firebaseUser.uid)
-        if (userData) {
-          setUser({
-            id: userData.id,
-            name: userData.name,
-            email: userData.email,
-            avatar: userData.avatar,
-            points: userData.points || 0,
-            xp: userData.xp || 0,
-            level: userData.level || 1,
-            badges: userData.badges || [],
-            specialization: userData.specialization as SpecializationType,
-            streak: userData.streak || 0,
-            lastContributionDate: userData.lastContributionDate,
-          })
-        } else {
-          // Create new user
-          await setUserData(firebaseUser.uid, {
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            email: firebaseUser.email || '',
-            avatar: firebaseUser.photoURL || undefined,
-            points: 100, // Starting points
-            xp: 0,
-            level: 1,
-            badges: [],
-            streak: 0,
-            totalNodesWritten: 0,
-            totalVotesReceived: 0,
-            totalStoriesCreated: 0,
-          })
-          
-          setUser({
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || 'User',
-            email: firebaseUser.email || '',
-            avatar: firebaseUser.photoURL || undefined,
-            points: 100,
-            xp: 0,
-            level: 1,
-            badges: [],
-            streak: 0,
-          })
-        }
-      } else {
-        setUser(null)
+    let mounted = true
+    
+    // Set a timeout to stop loading after 2 seconds even if Firebase doesn't respond
+    const timeoutId = setTimeout(() => {
+      if (mounted) {
+        console.warn('Firebase auth timeout - continuing without auth')
+        setLoading(false)
       }
-      
+    }, 2000)
+    
+    // Wrap in try-catch to prevent crashes
+    let unsubscribe: (() => void) | null = null
+    
+    // Only set up auth listener if Firebase is properly initialized
+    if (!isAuthInitialized) {
+      console.warn('Firebase auth not initialized, skipping auth listener')
       setLoading(false)
+      return () => {
+        mounted = false
+        clearTimeout(timeoutId)
+      }
+    }
+    
+    try {
+      unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      try {
+        if (!mounted) return
+        
+        clearTimeout(timeoutId)
+        setFirebaseUser(firebaseUser)
+        
+        if (firebaseUser) {
+          // Load user data from Firestore
+          try {
+            const userData = await getUserData(firebaseUser.uid)
+            if (userData && mounted) {
+              setUser({
+                id: userData.id,
+                name: userData.name,
+                email: userData.email,
+                avatar: userData.avatar,
+                points: userData.points || 0,
+                xp: userData.xp || 0,
+                level: userData.level || 1,
+                badges: userData.badges || [],
+                specialization: userData.specialization as SpecializationType,
+                streak: userData.streak || 0,
+                lastContributionDate: userData.lastContributionDate,
+                totalNodesWritten: userData.totalNodesWritten || 0,
+                totalVotesReceived: userData.totalVotesReceived || 0,
+                totalStoriesCreated: userData.totalStoriesCreated || 0,
+              })
+            } else if (mounted) {
+              // Create new user
+              try {
+                await setUserData(firebaseUser.uid, {
+                  id: firebaseUser.uid,
+                  name: firebaseUser.displayName || 'User',
+                  email: firebaseUser.email || '',
+                  avatar: firebaseUser.photoURL || undefined,
+                  points: 100, // Starting points
+                  xp: 0,
+                  level: 1,
+                  badges: [],
+                  streak: 0,
+                  totalNodesWritten: 0,
+                  totalVotesReceived: 0,
+                  totalStoriesCreated: 0,
+                })
+                
+                if (mounted) {
+                  setUser({
+                    id: firebaseUser.uid,
+                    name: firebaseUser.displayName || 'User',
+                    email: firebaseUser.email || '',
+                    avatar: firebaseUser.photoURL || undefined,
+                    points: 100,
+                    xp: 0,
+                    level: 1,
+                    badges: [],
+                    streak: 0,
+                    totalNodesWritten: 0,
+                    totalVotesReceived: 0,
+                    totalStoriesCreated: 0,
+                  })
+                }
+              } catch (createError) {
+                console.error('Error creating user:', createError)
+                // Still set user with basic info even if Firestore fails
+                if (mounted) {
+                  setUser({
+                    id: firebaseUser.uid,
+                    name: firebaseUser.displayName || 'User',
+                    email: firebaseUser.email || '',
+                    avatar: firebaseUser.photoURL || undefined,
+                    points: 100,
+                    xp: 0,
+                    level: 1,
+                    badges: [],
+                    streak: 0,
+                    totalNodesWritten: 0,
+                    totalVotesReceived: 0,
+                    totalStoriesCreated: 0,
+                  })
+                }
+              }
+            }
+          } catch (error) {
+            console.error('Error loading user data:', error)
+            // Set user with basic Firebase auth info even if Firestore fails
+            if (mounted && firebaseUser) {
+              setUser({
+                id: firebaseUser.uid,
+                name: firebaseUser.displayName || 'User',
+                email: firebaseUser.email || '',
+                avatar: firebaseUser.photoURL || undefined,
+                points: 100,
+                xp: 0,
+                level: 1,
+                badges: [],
+                streak: 0,
+                totalNodesWritten: 0,
+                totalVotesReceived: 0,
+                totalStoriesCreated: 0,
+              })
+            } else if (mounted) {
+              setUser(null)
+            }
+          }
+        } else {
+          setUser(null)
+        }
+      } catch (error) {
+        console.error('Auth state change error:', error)
+        if (mounted) {
+          setLoading(false)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
+    }, (error) => {
+      console.error('Firebase auth error:', error)
+      if (mounted) {
+        setLoading(false)
+      }
     })
+    } catch (error) {
+      console.error('Failed to set up auth listener:', error)
+      if (mounted) {
+        setLoading(false)
+      }
+    }
 
-    return () => unsubscribe()
+    return () => {
+      mounted = false
+      clearTimeout(timeoutId)
+      if (unsubscribe) {
+        try {
+          unsubscribe()
+        } catch (error) {
+          console.warn('Error unsubscribing from auth:', error)
+        }
+      }
+    }
   }, [])
 
   const signIn = async () => {
     try {
-      const { signInWithPopup, GoogleAuthProvider } = await import('firebase/auth')
+      const { signInWithPopup } = await import('firebase/auth')
       const { googleProvider } = await import('../config/firebase')
-      await signInWithPopup(auth, googleProvider)
-    } catch (error) {
+      const result = await signInWithPopup(auth, googleProvider)
+      // User will be set by the auth state listener
+      return result
+    } catch (error: any) {
       console.error('Error signing in:', error)
       throw error
     }
@@ -155,9 +269,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     points: user?.points || 0,
     badges: user?.badges || [],
     specialization: user?.specialization,
-    totalNodesWritten: user ? (user as any).totalNodesWritten || 0 : 0,
-    totalVotesReceived: user ? (user as any).totalVotesReceived || 0 : 0,
-    totalStoriesCreated: user ? (user as any).totalStoriesCreated || 0 : 0,
+    totalNodesWritten: user?.totalNodesWritten || 0,
+    totalVotesReceived: user?.totalVotesReceived || 0,
+    totalStoriesCreated: user?.totalStoriesCreated || 0,
   }
 
   const addPoints = async (amount: number) => {

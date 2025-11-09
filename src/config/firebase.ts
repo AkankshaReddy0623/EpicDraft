@@ -13,20 +13,39 @@ const firebaseConfig = {
   measurementId: "G-CMX8PEXG5N"
 }
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig)
+// Initialize Firebase with error handling
+let app
+let auth
+let db
+let googleProvider
+
+try {
+  app = initializeApp(firebaseConfig)
+  auth = getAuth(app)
+  db = getFirestore(app)
+  googleProvider = new GoogleAuthProvider()
+  console.log('Firebase initialized successfully')
+} catch (error) {
+  console.error('Firebase initialization error:', error)
+  // Create minimal fallback objects to prevent crashes
+  app = {} as any
+  auth = {} as any
+  db = {} as any
+  googleProvider = {} as any
+}
 
 // Initialize services
-export const auth = getAuth(app)
-export const db = getFirestore(app)
-export const googleProvider = new GoogleAuthProvider()
+export { auth, db, googleProvider }
 
 // Initialize Analytics (only in browser)
 let analytics: any = null
 if (typeof window !== 'undefined') {
-  analytics = getAnalytics(app)
+  try {
+    analytics = getAnalytics(app)
+  } catch (error) {
+    console.warn('Analytics initialization failed:', error)
+  }
 }
 
 export { analytics }
 export default app
-

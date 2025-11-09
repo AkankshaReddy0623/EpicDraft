@@ -22,7 +22,7 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gradient-to-br from-background-light via-white to-gray-50 dark:from-background-dark dark:via-gray-900 dark:to-gray-800 py-12 transition-colors duration-300">
+    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-800 py-12 transition-colors duration-300">
       <div className="card max-w-md w-full mx-4 animate-bounce-in">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-900 dark:text-gray-50 mb-3">Welcome to StoryWeave</h1>

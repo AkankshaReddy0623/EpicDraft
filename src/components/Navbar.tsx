@@ -6,10 +6,49 @@ import { useTheme } from '../context/ThemeContext'
 export default function Navbar() {
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const { user, stats } = useApp()
-  const { theme, toggleTheme } = useTheme()
+  
+  // Safely get context values with fallbacks
+  let user, stats, loading
+  let theme, toggleTheme
+  
+  try {
+    const appContext = useApp()
+    user = appContext.user
+    stats = appContext.stats
+    loading = appContext.loading
+  } catch (error) {
+    console.warn('Navbar: AppContext not available', error)
+    user = null
+    stats = { level: 1, xp: 0, points: 0, badges: [], totalNodesWritten: 0, totalVotesReceived: 0, totalStoriesCreated: 0 }
+    loading = false
+  }
+  
+  try {
+    const themeContext = useTheme()
+    theme = themeContext.theme
+    toggleTheme = themeContext.toggleTheme
+  } catch (error) {
+    console.warn('Navbar: ThemeContext not available', error)
+    theme = 'light'
+    toggleTheme = () => {}
+  }
 
   const isActive = (path: string) => location.pathname === path
+
+  // Show minimal navbar while loading
+  if (loading) {
+    return (
+      <nav className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 shadow-sm sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <Link to="/" className="flex items-center space-x-2">
+              <span className="text-2xl font-bold text-gold">StoryWeave</span>
+            </Link>
+          </div>
+        </div>
+      </nav>
+    )
+  }
 
   return (
     <nav className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 shadow-sm sticky top-0 z-50 transition-colors duration-300">

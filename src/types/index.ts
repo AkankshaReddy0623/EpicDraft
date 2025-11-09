@@ -12,6 +12,9 @@ export interface User {
   specialization?: SpecializationType
   streak: number
   lastContributionDate?: string
+  totalNodesWritten?: number
+  totalVotesReceived?: number
+  totalStoriesCreated?: number
 }
 
 export interface PowerItem {

@@ -10,7 +10,6 @@ import {
   where, 
   orderBy,
   onSnapshot,
-  Timestamp,
   serverTimestamp
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
@@ -201,7 +200,7 @@ export const subscribeToNodes = (storyId: string, callback: (nodes: StoryNode[])
 }
 
 // Vote on a node
-export const voteNode = async (nodeId: string, userId: string, storyId: string) => {
+export const voteNode = async (nodeId: string, userId: string) => {
   try {
     const nodeRef = doc(db, 'nodes', nodeId)
     const nodeDoc = await getDoc(nodeRef)

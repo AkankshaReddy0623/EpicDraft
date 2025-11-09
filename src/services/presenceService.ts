@@ -1,7 +1,6 @@
 import { 
   doc, 
   setDoc, 
-  onDisconnect, 
   serverTimestamp,
   onSnapshot,
   collection,
@@ -27,6 +26,11 @@ export const setPresence = async (
   userAvatar?: string
 ) => {
   try {
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      console.warn('Firestore not initialized, skipping presence')
+      return
+    }
+    
     const presenceRef = doc(db, 'stories', storyId, 'presence', userId)
     
     await setDoc(presenceRef, {
@@ -37,21 +41,20 @@ export const setPresence = async (
       isActive: true,
       lastSeen: serverTimestamp(),
     })
-    
-    // Set up disconnect handler
-    onDisconnect(presenceRef).update({
-      isActive: false,
-      lastSeen: serverTimestamp(),
-    })
   } catch (error) {
     console.error('Error setting presence:', error)
-    throw error
+    // Don't throw - presence is not critical
   }
 }
 
 // Remove user presence
 export const removePresence = async (storyId: string, userId: string) => {
   try {
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      console.warn('Firestore not initialized, skipping presence removal')
+      return
+    }
+    
     const presenceRef = doc(db, 'stories', storyId, 'presence', userId)
     await setDoc(presenceRef, {
       isActive: false,
@@ -59,7 +62,7 @@ export const removePresence = async (storyId: string, userId: string) => {
     }, { merge: true })
   } catch (error) {
     console.error('Error removing presence:', error)
-    throw error
+    // Don't throw - presence is not critical
   }
 }
 
@@ -68,16 +71,28 @@ export const subscribeToPresence = (
   storyId: string,
   callback: (presences: Presence[]) => void
 ) => {
-  const q = query(
-    collection(db, 'stories', storyId, 'presence'),
-    where('isActive', '==', true)
-  )
-  
-  return onSnapshot(q, (snapshot) => {
-    const presences = snapshot.docs.map(doc => ({
-      ...doc.data(),
-    })) as Presence[]
-    callback(presences)
-  })
+  try {
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      console.warn('Firestore not initialized, skipping presence subscription')
+      return () => {} // Return empty unsubscribe function
+    }
+    
+    const q = query(
+      collection(db, 'stories', storyId, 'presence'),
+      where('isActive', '==', true)
+    )
+    
+    return onSnapshot(q, (snapshot) => {
+      const presences = snapshot.docs.map(doc => ({
+        ...doc.data(),
+      })) as Presence[]
+      callback(presences)
+    }, (error) => {
+      console.error('Presence subscription error:', error)
+      callback([])
+    })
+  } catch (error) {
+    console.error('Error setting up presence subscription:', error)
+    return () => {} // Return empty unsubscribe function
+  }
 }
-

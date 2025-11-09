@@ -4,15 +4,37 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 export default function Landing() {
-  const { user } = useApp()
+  let user, loading
+  try {
+    const appContext = useApp()
+    user = appContext.user
+    loading = appContext.loading
+  } catch (error) {
+    console.warn('Landing: AppContext not available', error)
+    user = null
+    loading = false
+  }
+  
   const navigate = useNavigate()
 
   useEffect(() => {
     // If user is logged in, redirect to dashboard
-    if (user) {
+    if (!loading && user) {
       navigate('/home')
     }
-  }, [user, navigate])
+  }, [user, loading, navigate])
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gray-50 dark:bg-gray-950">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gold mx-auto mb-4"></div>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center bg-gradient-to-br from-gray-50 via-white to-gray-100 dark:from-gray-950 dark:via-gray-900 dark:to-gray-800 py-12 transition-colors duration-300">
@@ -55,16 +77,16 @@ export default function Landing() {
           
           <div className="game-card animate-slide-up" style={{ animationDelay: '0.4s' }}>
             <div className="text-gold text-4xl mb-4 animate-float" style={{ animationDelay: '0.2s' }}>🎮</div>
-            <h3 className="text-xl font-semibold text-text-light dark:text-text-dark mb-3">Gamified Experience</h3>
-            <p className="text-text-lightSecondary dark:text-text-darkSecondary leading-relaxed">
+            <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-3">Gamified Experience</h3>
+            <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
               Earn points, unlock badges, and compete on the leaderboard
             </p>
           </div>
           
           <div className="game-card animate-slide-up" style={{ animationDelay: '0.5s' }}>
             <div className="text-gold text-4xl mb-4 animate-float" style={{ animationDelay: '0.4s' }}>🗳️</div>
-            <h3 className="text-xl font-semibold text-text-light dark:text-text-dark mb-3">Vote on Paths</h3>
-            <p className="text-text-lightSecondary dark:text-text-darkSecondary leading-relaxed">
+            <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-3">Vote on Paths</h3>
+            <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
               Democracy in storytelling - vote on which branches become canon
             </p>
           </div>

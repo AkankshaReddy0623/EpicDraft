@@ -38,7 +38,7 @@ export default function Dashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="text-center py-16">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gold mx-auto mb-4"></div>
-          <p className="text-text-lightSecondary dark:text-text-darkSecondary">Loading...</p>
+          <p className="text-gray-600 dark:text-gray-400">Loading...</p>
         </div>
       </div>
     )
@@ -48,8 +48,8 @@ export default function Dashboard() {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="card text-center py-16">
-          <h1 className="text-3xl font-bold text-text-light dark:text-text-dark mb-4">Welcome to StoryWeave</h1>
-          <p className="text-text-lightSecondary dark:text-text-darkSecondary mb-6">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-50 mb-4">Welcome to StoryWeave</h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
             Sign in to start creating and collaborating on stories
           </p>
           <Link to="/login" className="btn-primary inline-block">

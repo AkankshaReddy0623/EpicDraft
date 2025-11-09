@@ -58,6 +58,10 @@
     animation: pulseGold 2s ease-in-out infinite;
   }
   
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+  
   .game-card {
     @apply card hover:shadow-xl hover:scale-105 transition-all duration-300 border-2 border-gold/20 hover:border-gold/50;
   }
@@ -110,6 +114,15 @@
   }
   50% {
     box-shadow: 0 0 0 10px rgba(212, 175, 55, 0);
+  }
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
   }
 }
 
