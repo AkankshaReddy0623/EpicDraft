@@ -3,8 +3,7 @@ import { useApp } from '../context/AppContext'
 import { InventoryItem } from '../types'
 
 export default function Inventory() {
-  const { inventory, useItem, user } = useApp()
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null)
+  const { inventory, useItem } = useApp()
   const [useSuccess, setUseSuccess] = useState<string | null>(null)
 
   const handleUseItem = (item: InventoryItem) => {

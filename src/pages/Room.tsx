@@ -1,19 +1,23 @@
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import { getStory, subscribeToStory, getNodes, subscribeToNodes, createNode, voteNode, StoryNode } from '../services/storyService'
 import { setPresence, removePresence } from '../services/presenceService'
+import { addNodeReaction } from '../services/nodeComments'
+import { analyzeNode } from '../services/aiAnalytics'
 import ReactFlow, { Node, Edge, Background, Controls, MiniMap } from 'reactflow'
 import ChatPanel from '../components/ChatPanel'
 import PresenceIndicator from '../components/PresenceIndicator'
 import AchievementPopup from '../components/AchievementPopup'
 import Confetti from '../components/Confetti'
+import AIDialogueHelper from '../components/AIDialogueHelper'
+import NodeComments from '../components/NodeComments'
 import 'reactflow/dist/style.css'
 
 export default function Room() {
   const { roomId } = useParams()
   const navigate = useNavigate()
-  const { user, addPoints, addXP, updateStreak, inventory } = useApp()
+  const { user, addPoints, addXP, updateStreak, inventory, updateQuestProgress } = useApp()
   const [story, setStory] = useState<any>(null)
   const [nodes, setNodes] = useState<StoryNode[]>([])
   const [nodeContent, setNodeContent] = useState('')
@@ -43,80 +47,178 @@ export default function Room() {
     }
   }, [roomId, user])
 
-  // Load story and nodes
+  // Load story and nodes with optimized loading
   useEffect(() => {
     if (!roomId) return
 
+    let mounted = true
+    let unsubscribeStory: (() => void) | null = null
+    let unsubscribeNodes: (() => void) | null = null
+
     const loadStory = async () => {
       try {
-        const storyData = await getStory(roomId)
+        setLoading(true)
+        setError(null)
+        
+        // Load story and nodes in parallel for faster loading
+        const [storyData, initialNodes] = await Promise.all([
+          getStory(roomId).catch(err => {
+            console.warn('Error loading story:', err)
+            return null
+          }),
+          getNodes(roomId).catch(err => {
+            console.warn('Error loading nodes:', err)
+            return []
+          })
+        ])
+        
+        if (!mounted) return
+        
         if (!storyData) {
           setError('Story not found')
           setLoading(false)
           return
         }
+        
         setStory(storyData)
+        setNodes(initialNodes || [])
+        updateReactFlowGraph(initialNodes || [])
         setLoading(false)
 
-        // Subscribe to story updates
-        const unsubscribeStory = subscribeToStory(roomId, (updatedStory) => {
-          setStory(updatedStory)
-        })
+        // Subscribe to story updates (only if mounted)
+        if (mounted) {
+          unsubscribeStory = subscribeToStory(roomId, (updatedStory) => {
+            if (mounted) setStory(updatedStory)
+          })
 
-        // Subscribe to nodes updates
-        const unsubscribeNodes = subscribeToNodes(roomId, (updatedNodes) => {
-          setNodes(updatedNodes)
-          updateReactFlowGraph(updatedNodes)
-        })
-
-        return () => {
-          unsubscribeStory()
-          unsubscribeNodes()
+          // Subscribe to nodes updates (only if mounted)
+          unsubscribeNodes = subscribeToNodes(roomId, (updatedNodes) => {
+            if (mounted) {
+              setNodes(updatedNodes)
+              updateReactFlowGraph(updatedNodes)
+            }
+          })
         }
       } catch (err: any) {
-        setError(err.message || 'Failed to load story')
-        setLoading(false)
+        if (mounted) {
+          // Don't show offline errors as critical errors
+          if (err.message?.includes('offline') || err.code === 'unavailable') {
+            console.warn('Offline mode - using cached data')
+            setError(null) // Clear error, use cached data
+          } else {
+            setError(err.message || 'Failed to load story')
+          }
+          setLoading(false)
+        }
       }
     }
 
     loadStory()
-  }, [roomId])
 
-  // Update React Flow graph when nodes change
-  const updateReactFlowGraph = (storyNodes: StoryNode[]) => {
-    const flowNodes: Node[] = storyNodes.map((node, index) => ({
-      id: node.id || '',
-      type: 'default',
-      position: {
-        x: (index % 3) * 250,
-        y: Math.floor(index / 3) * 150,
-      },
-      data: {
-        label: (
-          <div className="p-2">
-            <div className="text-xs font-semibold text-gold mb-1">
-              {node.authorName}
+    return () => {
+      mounted = false
+      if (unsubscribeStory) unsubscribeStory()
+      if (unsubscribeNodes) unsubscribeNodes()
+    }
+  }, [roomId, updateReactFlowGraph])
+
+  // Update React Flow graph when nodes change with better hierarchical layout
+  const updateReactFlowGraph = useCallback((storyNodes: StoryNode[]) => {
+    if (storyNodes.length === 0) {
+      setReactFlowNodes([])
+      setReactFlowEdges([])
+      setLoading(false)
+      return
+    }
+
+    // Build a tree structure for better layout
+    const nodeMap = new Map<string, StoryNode>()
+    storyNodes.forEach(node => {
+      if (node.id) nodeMap.set(node.id, node)
+    })
+
+    // Find root nodes (no parent or parent doesn't exist)
+    const rootNodes = storyNodes.filter(n => !n.parentId || !nodeMap.has(n.parentId))
+    
+    // Calculate positions using hierarchical layout
+    const positions = new Map<string, { x: number; y: number }>()
+    const nodeLevels = new Map<string, number>()
+    const levelNodes = new Map<number, StoryNode[]>()
+    
+    // Calculate levels (depth from root)
+    const calculateLevel = (nodeId: string, level: number = 0): number => {
+      if (nodeLevels.has(nodeId)) return nodeLevels.get(nodeId)!
+      const node = nodeMap.get(nodeId)
+      if (!node || !node.parentId || !nodeMap.has(node.parentId)) {
+        nodeLevels.set(nodeId, level)
+        return level
+      }
+      const parentLevel = calculateLevel(node.parentId, level + 1)
+      nodeLevels.set(nodeId, parentLevel)
+      return parentLevel
+    }
+
+    storyNodes.forEach(node => {
+      if (node.id) {
+        const level = calculateLevel(node.id)
+        if (!levelNodes.has(level)) levelNodes.set(level, [])
+        levelNodes.get(level)!.push(node)
+      }
+    })
+
+    // Assign positions
+    levelNodes.forEach((nodes, level) => {
+      const y = level * 200 + 50
+      const spacing = 300
+      const startX = -(nodes.length - 1) * spacing / 2
+      nodes.forEach((node, index) => {
+        if (node.id) {
+          positions.set(node.id, {
+            x: startX + index * spacing,
+            y: y
+          })
+        }
+      })
+    })
+
+    const flowNodes: Node[] = storyNodes.map((node) => {
+      const pos = node.id ? positions.get(node.id) || { x: 0, y: 0 } : { x: 0, y: 0 }
+      return {
+        id: node.id || '',
+        type: 'default',
+        position: pos,
+        data: {
+          label: (
+            <div className="p-2 max-w-[200px]">
+              <div className="text-xs font-semibold text-gold mb-1 truncate">
+                {node.authorName}
+              </div>
+              <div className="text-xs text-gray-600 dark:text-gray-400 line-clamp-3 mb-1">
+                {node.content.substring(0, 80)}...
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                {node.isCanon && (
+                  <span className="text-xs text-gold font-bold">⭐ Canon</span>
+                )}
+                <span className="text-xs text-gray-500">👍 {node.votes || 0}</span>
+              </div>
             </div>
-            <div className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2">
-              {node.content.substring(0, 50)}...
-            </div>
-            {node.isCanon && (
-              <div className="text-xs text-gold font-bold mt-1">⭐ Canon</div>
-            )}
-          </div>
-        ),
-      },
-      style: {
-        background: node.isCanon ? '#D4AF37' : '#fff',
-        border: node.isCanon ? '2px solid #B8941F' : '1px solid #EAEAEA',
-        borderRadius: '8px',
-        minWidth: '200px',
-        color: node.isCanon ? '#fff' : '#1A1A1A',
-      },
-    }))
+          ),
+        },
+        style: {
+          background: node.isCanon ? '#D4AF37' : '#fff',
+          border: node.isCanon ? '2px solid #B8941F' : '1px solid #EAEAEA',
+          borderRadius: '8px',
+          minWidth: '200px',
+          maxWidth: '200px',
+          color: node.isCanon ? '#fff' : '#1A1A1A',
+          boxShadow: node.isCanon ? '0 4px 6px rgba(212, 175, 55, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
+        },
+      }
+    })
 
     const flowEdges: Edge[] = storyNodes
-      .filter(node => node.parentId)
+      .filter(node => node.parentId && node.id)
       .map(node => ({
         id: `e${node.parentId}-${node.id}`,
         source: node.parentId || '',
@@ -125,14 +227,16 @@ export default function Room() {
         animated: true,
         style: {
           stroke: node.isCanon ? '#D4AF37' : '#999',
-          strokeWidth: node.isCanon ? 3 : 1,
+          strokeWidth: node.isCanon ? 3 : 2,
         },
+        label: node.isCanon ? '⭐' : '',
+        labelStyle: { fill: '#D4AF37', fontWeight: 600 },
       }))
 
     setReactFlowNodes(flowNodes)
     setReactFlowEdges(flowEdges)
     setLoading(false)
-  }
+  }, [])
 
   const handleSaveNode = async (isPlotTwist: boolean = false) => {
     if (!user || !roomId || !nodeContent.trim()) {
@@ -144,13 +248,46 @@ export default function Room() {
       setSaving(true)
       setError(null)
 
-      await createNode({
-        storyId: roomId,
-        parentId: selectedParentId,
-        content: nodeContent,
-        authorId: user.id,
-        authorName: user.name,
-      })
+      // Validate content
+      const trimmedContent = nodeContent.trim()
+      if (trimmedContent.length < 10) {
+        setError('Node content must be at least 10 characters long')
+        setSaving(false)
+        return
+      }
+
+      // Create the node with error handling
+      let nodeId: string
+      try {
+        nodeId = await createNode({
+          storyId: roomId,
+          parentId: selectedParentId || null,
+          content: trimmedContent,
+          authorId: user.id,
+          authorName: user.name,
+        })
+        console.log('✅ Node created successfully:', nodeId)
+      } catch (createError: any) {
+        console.error('❌ Error creating node:', createError)
+        setError(createError.message || 'Failed to save node. Please check your connection and try again.')
+        setSaving(false)
+        return
+      }
+
+      // Verify node was created
+      if (!nodeId) {
+        setError('Node creation failed - no ID returned')
+        setSaving(false)
+        return
+      }
+
+      // Update user stats
+      try {
+        const { updateUserStats } = await import('../services/userService')
+        await updateUserStats(user.id, { totalNodesWritten: 1 })
+      } catch (statsError) {
+        console.warn('Failed to update user stats:', statsError)
+      }
 
       // Award points and XP
       const pointsEarned = isPlotTwist ? 10 : 5
@@ -163,6 +300,12 @@ export default function Room() {
         await addPoints(pointsEarned)
         await addXP(xpEarned)
         await updateStreak()
+        
+        // Update quest progress
+        updateQuestProgress('q1', 1) // First Contribution quest
+        if (isPlotTwist) {
+          updateQuestProgress('q2', 1) // Plot Twister quest
+        }
       } catch (pointsError) {
         console.warn('Failed to update points/XP:', pointsError)
         // Continue anyway - node was saved
@@ -199,7 +342,19 @@ export default function Room() {
   const handleVote = async (nodeId: string) => {
     if (!user || !roomId) return
     try {
+      const node = nodes.find(n => n.id === nodeId)
+      const hadVoted = node?.voters?.includes(user.id) || false
+      
       await voteNode(nodeId, user.id)
+      
+      // Award points for voting (once per node)
+      if (!hadVoted) {
+        await addPoints(2) // +2 points for voting
+        await addXP(3) // +3 XP for voting
+      }
+      
+      // Update quest progress for "Popular Writer" if voting on someone else's node
+      // Quest progress is tracked automatically in AppContext
     } catch (err: any) {
       setError(err.message || 'Failed to vote')
     }
@@ -231,9 +386,9 @@ export default function Room() {
 
   if (!user) {
     return (
-      <div className="h-[calc(100vh-4rem)] flex items-center justify-center bg-background-light dark:bg-background-dark">
+      <div className="h-[calc(100vh-4rem)] flex items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="card text-center max-w-md">
-          <p className="text-text-lightSecondary dark:text-text-darkSecondary mb-4">Please sign in to view this story</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">Please sign in to view this story room</p>
           <Link to="/login" className="btn-primary">
             Sign In
           </Link>
@@ -250,7 +405,7 @@ export default function Room() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-50">{story?.title || 'Story Room'}</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              {story?.genre} • {nodes.length} nodes
+              {story?.genre} • {nodes.length} nodes • {story?.visibility}
             </p>
           </div>
           {roomId && user && <PresenceIndicator storyId={roomId} currentUserId={user.id} />}
@@ -260,7 +415,7 @@ export default function Room() {
             to={`/room/${roomId}/read`} 
             className="btn-secondary text-sm"
           >
-            Reader Mode
+            📖 Reader Mode
           </Link>
           <Link to="/home" className="btn-secondary text-sm">
             ← Back
@@ -273,7 +428,7 @@ export default function Room() {
         {/* Left: Story Graph */}
         <div className="flex-1 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden transition-colors duration-300">
           <div className="p-4 h-full flex flex-col">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-4">Story Graph</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-4">Story Branch Graph</h2>
             <div className="flex-1 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 overflow-hidden">
               {reactFlowNodes.length > 0 ? (
                 <ReactFlow
@@ -301,7 +456,7 @@ export default function Room() {
         {/* Middle: Node Viewer + Editor */}
         <div className="flex-1 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto transition-colors duration-300">
           <div className="p-4">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-4">Node Editor</h2>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-4">Collaborative Node Editor</h2>
             {error && (
               <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-lg text-red-700 dark:text-red-400 text-sm">
                 {error}
@@ -310,30 +465,48 @@ export default function Room() {
             <div className="card">
               {nodes.length > 0 && (
                 <div className="mb-4">
-                    <label className="block text-sm font-semibold text-gray-900 dark:text-gray-50 mb-2">
-                    Parent Node (Optional)
+                  <label className="block text-sm font-semibold text-gray-900 dark:text-gray-50 mb-2">
+                    Parent Node (Optional) - Choose where to branch from
                   </label>
                   <select
                     className="input-field mb-4"
                     value={selectedParentId || ''}
                     onChange={(e) => setSelectedParentId(e.target.value || null)}
                   >
-                    <option value="">Start new branch</option>
-                    {nodes.map(node => (
+                    <option value="">Start new branch (root level)</option>
+                    {nodes.filter(n => n.isCanon).map(node => (
                       <option key={node.id} value={node.id}>
                         {node.content.substring(0, 50)}... by {node.authorName}
                       </option>
                     ))}
                   </select>
+                  <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+                    💡 Only canon nodes are shown. Select a parent to create a branch from that point.
+                  </p>
                 </div>
               )}
               
-              <textarea
-                value={nodeContent}
-                onChange={(e) => setNodeContent(e.target.value)}
-                placeholder="Write your story node here..."
-                className="input-field min-h-[200px] mb-4"
-              />
+              <div className="mb-4">
+                <label className="block text-sm font-semibold text-gray-900 dark:text-gray-50 mb-2">
+                  Your Story Node
+                </label>
+                <textarea
+                  value={nodeContent}
+                  onChange={(e) => setNodeContent(e.target.value)}
+                  placeholder="Write your story node here... This will be a new branch in the story!"
+                  className="input-field min-h-[200px] mb-2"
+                />
+                <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+                  <span>{nodeContent.length} characters</span>
+                  <AIDialogueHelper
+                    storyContent={story?.description || ''}
+                    currentNodeContent={nodeContent}
+                    onInsertDialogue={(dialogue) => {
+                      setNodeContent(prev => prev + '\n\n' + dialogue)
+                    }}
+                  />
+                </div>
+              </div>
               
               <div className="flex gap-3">
                 <button
@@ -360,36 +533,92 @@ export default function Room() {
             {/* Existing Nodes */}
             {nodes.length > 0 && (
               <div className="mt-6">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4">Story Nodes</h3>
-                <div className="space-y-3">
-                  {nodes.map((node) => (
-                    <div
-                      key={node.id}
-                      className={`card ${node.isCanon ? 'border-2 border-gold bg-gold/10' : ''}`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-semibold text-gray-900 dark:text-gray-50">
-                              {node.authorName}
-                            </span>
-                            {node.isCanon && (
-                              <span className="text-xs bg-gold text-white px-2 py-0.5 rounded-full">Canon</span>
-                            )}
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
+                  <span>📚</span> Story Nodes ({nodes.length})
+                </h3>
+                <div className="space-y-4">
+                  {nodes.map((node) => {
+                    const nodeAnalysis = useMemo(() => analyzeNode(node.content), [node.content])
+                    return (
+                      <div
+                        key={node.id}
+                        className={`card transition-all duration-300 hover:shadow-xl hover:scale-[1.01] ${
+                          node.isCanon 
+                            ? 'border-2 border-gold bg-gradient-to-br from-gold/10 to-gold/5 animate-glow-pulse' 
+                            : 'hover:border-gold/50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm font-semibold text-gray-900 dark:text-gray-50">
+                                {node.authorName}
+                              </span>
+                              {node.isCanon && (
+                                <span className="text-xs bg-gold text-white px-2 py-0.5 rounded-full font-bold animate-pulse-gold">
+                                  ⭐ Canon
+                                </span>
+                              )}
+                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                {nodeAnalysis.wordCount} words • Quality: {nodeAnalysis.qualityScore}/100
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+                              {node.content}
+                            </p>
                           </div>
-                          <p className="text-sm text-gray-600 dark:text-gray-400">
-                            {node.content}
-                          </p>
                         </div>
-                        <button
-                          onClick={() => handleVote(node.id || '')}
-                          className="ml-4 px-3 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gold hover:text-white rounded-lg transition-colors text-sm"
-                        >
-                          👍 {node.votes || 0}
-                        </button>
+                        
+                        <div className="flex items-center justify-between pt-3 border-t border-gray-200 dark:border-gray-700">
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => handleVote(node.id || '')}
+                              className={`px-3 py-1.5 rounded-lg transition-all text-sm font-semibold ${
+                                node.voters?.includes(user?.id || '')
+                                  ? 'bg-gold text-white shadow-md'
+                                  : 'bg-gray-100 dark:bg-gray-800 hover:bg-gold hover:text-white'
+                              }`}
+                            >
+                              👍 {node.votes || 0}
+                            </button>
+                            
+                            {/* Node Reactions */}
+                            <div className="flex items-center gap-1">
+                              {['❤️', '🔥', '💡'].map((emoji) => (
+                                <button
+                                  key={emoji}
+                                  onClick={async () => {
+                                    if (node.id && user) {
+                                      try {
+                                        await addNodeReaction(node.id, user.id, emoji)
+                                      } catch (err) {
+                                        console.error('Error adding reaction:', err)
+                                      }
+                                    }
+                                  }}
+                                  className="text-lg hover:scale-125 transition-transform"
+                                  title={emoji}
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          
+                          {node.parentId && (
+                            <p className="text-xs text-gray-500 dark:text-gray-500">
+                              Branch from: {nodes.find(n => n.id === node.parentId)?.authorName || 'Unknown'}
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* Comments Section */}
+                        {node.id && (
+                          <NodeComments nodeId={node.id} storyId={roomId || ''} />
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -407,14 +636,19 @@ export default function Room() {
             </div>
             
             <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
                 <span>👥</span> Contributors
               </h3>
               <div className="space-y-2">
                 {story?.contributors && story.contributors.length > 0 ? (
-                  <p className="text-gray-600 dark:text-gray-400 text-sm">
-                    {story.contributors.length} contributor(s)
-                  </p>
+                  <div className="card bg-gray-50 dark:bg-gray-800">
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">
+                      {story.contributors.length} contributor(s)
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                      Owner: {story.ownerName}
+                    </p>
+                  </div>
                 ) : (
                   <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-4">No contributors yet</p>
                 )}
@@ -422,11 +656,13 @@ export default function Room() {
             </div>
             
             <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
                 <span>🗳️</span> Voting
               </h3>
               <div className="card bg-gray-50 dark:bg-gray-800">
-                <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-4">Vote on nodes to make them canon</p>
+                <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-4">
+                  Vote on nodes to make them canon. The most voted branch becomes the main story path.
+                </p>
               </div>
             </div>
           </div>

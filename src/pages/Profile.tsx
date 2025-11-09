@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useApp } from '../context/AppContext'
 import { SpecializationType } from '../types'
+import StoryHistory from '../components/StoryHistory'
 
 export default function Profile() {
   const { user, stats, badges, setSpecialization } = useApp()
@@ -30,9 +31,16 @@ export default function Profile() {
     { type: 'dialogue-whisperer', name: 'Dialogue Whisperer', icon: '💬', description: 'Dialogue rewards' },
   ]
 
-  const handleSpecializationSelect = (spec: SpecializationType) => {
-    setSpecialization(spec)
-    setShowSpecializationModal(false)
+  const handleSpecializationSelect = async (spec: SpecializationType) => {
+    try {
+      await setSpecialization(spec)
+      setShowSpecializationModal(false)
+      // Show success message
+      alert(`Specialization set to ${specializations.find(s => s.type === spec)?.name}!`)
+    } catch (error) {
+      console.error('Error setting specialization:', error)
+      alert('Failed to set specialization. Please try again.')
+    }
   }
 
   return (
@@ -188,10 +196,7 @@ export default function Profile() {
           
           <div className="card animate-slide-up" style={{ animationDelay: '0.3s' }}>
             <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4">Story History</h3>
-            <div className="text-center py-8">
-              <p className="text-gray-600 dark:text-gray-400 mb-2">No stories written yet.</p>
-              <p className="text-xs text-gray-600 dark:text-gray-400">Start creating to see your history here</p>
-            </div>
+            <StoryHistory userId={user.id} />
           </div>
         </div>
       </div>

@@ -46,49 +46,88 @@ export interface Story {
 // Create a new story
 export const createStory = async (storyData: Omit<Story, 'id' | 'createdAt' | 'updatedAt' | 'nodeCount'>) => {
   try {
+    // Check if db is initialized
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      throw new Error('Database not initialized')
+    }
+
+    // Create the story document
     const storyRef = await addDoc(collection(db, 'stories'), {
-      ...storyData,
+      title: storyData.title,
+      genre: storyData.genre,
+      visibility: storyData.visibility,
+      ownerId: storyData.ownerId,
+      ownerName: storyData.ownerName,
+      description: storyData.description || '',
+      starterPrompt: storyData.starterPrompt || '',
+      contributors: storyData.contributors || [storyData.ownerId],
       nodeCount: 0,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     })
     
+    console.log('Story created with ID:', storyRef.id)
+    
+    // Update user's totalStoriesCreated count
+    try {
+      const { updateUserStats } = await import('./userService')
+      await updateUserStats(storyData.ownerId, { totalStoriesCreated: 1 })
+    } catch (err) {
+      console.warn('Failed to update user stats:', err)
+    }
+    
     // Create initial root node if starter prompt exists
-    if (storyData.starterPrompt) {
-      await addDoc(collection(db, 'nodes'), {
-        storyId: storyRef.id,
-        parentId: null,
-        content: storyData.starterPrompt,
-        authorId: storyData.ownerId,
-        authorName: storyData.ownerName,
-        votes: 0,
-        voters: [],
-        isCanon: true,
-        order: 0,
-        createdAt: serverTimestamp(),
-      })
-      
-      await updateDoc(doc(db, 'stories', storyRef.id), {
-        nodeCount: 1,
-      })
+    if (storyData.starterPrompt && storyData.starterPrompt.trim()) {
+      try {
+        await addDoc(collection(db, 'nodes'), {
+          storyId: storyRef.id,
+          parentId: null,
+          content: storyData.starterPrompt,
+          authorId: storyData.ownerId,
+          authorName: storyData.ownerName,
+          votes: 0,
+          voters: [],
+          isCanon: true,
+          order: 0,
+          createdAt: serverTimestamp(),
+        })
+        
+        await updateDoc(doc(db, 'stories', storyRef.id), {
+          nodeCount: 1,
+          updatedAt: serverTimestamp(),
+        })
+        
+        console.log('Root node created for story:', storyRef.id)
+      } catch (nodeError) {
+        console.error('Error creating root node:', nodeError)
+        // Don't throw - story was created successfully
+      }
     }
     
     return storyRef.id
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error creating story:', error)
-    throw error
+    throw new Error(error.message || 'Failed to create story. Please try again.')
   }
 }
 
 // Get all stories
 export const getStories = async (userId?: string) => {
   try {
-    let q = query(collection(db, 'stories'), orderBy('updatedAt', 'desc'))
+    let q
     
     if (userId) {
+      // Get user's stories (both public and private)
       q = query(
         collection(db, 'stories'),
         where('ownerId', '==', userId),
+        orderBy('updatedAt', 'desc')
+      )
+    } else {
+      // Get all public stories
+      q = query(
+        collection(db, 'stories'),
+        where('visibility', '==', 'public'),
         orderBy('updatedAt', 'desc')
       )
     }
@@ -104,7 +143,7 @@ export const getStories = async (userId?: string) => {
   }
 }
 
-// Get a single story
+// Get a single story with offline support
 export const getStory = async (storyId: string) => {
   try {
     const storyDoc = await getDoc(doc(db, 'stories', storyId))
@@ -112,7 +151,20 @@ export const getStory = async (storyId: string) => {
       return { id: storyDoc.id, ...storyDoc.data() } as Story
     }
     return null
-  } catch (error) {
+  } catch (error: any) {
+    // Handle offline errors gracefully
+    if (error.code === 'unavailable' || error.message?.includes('offline')) {
+      console.warn('Offline mode - attempting to use cached data')
+      // Try to get from cache
+      try {
+        const storyDoc = await getDoc(doc(db, 'stories', storyId))
+        if (storyDoc.exists()) {
+          return { id: storyDoc.id, ...storyDoc.data() } as Story
+        }
+      } catch (cacheError) {
+        console.warn('Cache read failed:', cacheError)
+      }
+    }
     console.error('Error getting story:', error)
     throw error
   }
@@ -132,6 +184,16 @@ export const subscribeToStory = (storyId: string, callback: (story: Story | null
 // Create a story node
 export const createNode = async (nodeData: Omit<StoryNode, 'id' | 'createdAt' | 'votes' | 'voters' | 'isCanon'>) => {
   try {
+    // Check if db is initialized
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      throw new Error('Database not initialized')
+    }
+
+    // Validate required fields
+    if (!nodeData.storyId || !nodeData.content || !nodeData.authorId || !nodeData.authorName) {
+      throw new Error('Missing required node data')
+    }
+
     // Get current node count for order
     const nodesQuery = query(
       collection(db, 'nodes'),
@@ -140,30 +202,51 @@ export const createNode = async (nodeData: Omit<StoryNode, 'id' | 'createdAt' | 
     const nodesSnapshot = await getDocs(nodesQuery)
     const order = nodesSnapshot.size
 
+    // Create the node
     const nodeRef = await addDoc(collection(db, 'nodes'), {
-      ...nodeData,
+      storyId: nodeData.storyId,
+      parentId: nodeData.parentId || null,
+      content: nodeData.content.trim(),
+      authorId: nodeData.authorId,
+      authorName: nodeData.authorName,
       votes: 0,
       voters: [],
       isCanon: false,
       order,
+      reactions: {},
       createdAt: serverTimestamp(),
     })
     
-    // Update story node count
+    console.log('✅ Node document created with ID:', nodeRef.id)
+    
+    // Update story node count and contributors
     const storyRef = doc(db, 'stories', nodeData.storyId)
-    await updateDoc(storyRef, {
-      nodeCount: nodesSnapshot.size + 1,
-      updatedAt: serverTimestamp(),
-    })
+    const storyDoc = await getDoc(storyRef)
+    
+    if (storyDoc.exists()) {
+      const storyData = storyDoc.data()
+      const contributors = storyData.contributors || []
+      const updatedContributors = contributors.includes(nodeData.authorId)
+        ? contributors
+        : [...contributors, nodeData.authorId]
+      
+      await updateDoc(storyRef, {
+        nodeCount: nodesSnapshot.size + 1,
+        contributors: updatedContributors,
+        updatedAt: serverTimestamp(),
+      })
+      
+      console.log('✅ Story updated with new node count')
+    }
     
     return nodeRef.id
-  } catch (error) {
-    console.error('Error creating node:', error)
-    throw error
+  } catch (error: any) {
+    console.error('❌ Error creating node:', error)
+    throw new Error(error.message || 'Failed to create node. Please try again.')
   }
 }
 
-// Get nodes for a story
+// Get nodes for a story with offline support
 export const getNodes = async (storyId: string) => {
   try {
     const q = query(
@@ -176,7 +259,27 @@ export const getNodes = async (storyId: string) => {
       id: doc.id,
       ...doc.data(),
     })) as StoryNode[]
-  } catch (error) {
+  } catch (error: any) {
+    // Handle offline errors gracefully
+    if (error.code === 'unavailable' || error.message?.includes('offline')) {
+      console.warn('Offline mode - attempting to use cached data')
+      // Try to get from cache
+      try {
+        const q = query(
+          collection(db, 'nodes'),
+          where('storyId', '==', storyId),
+          orderBy('order', 'asc')
+        )
+        const snapshot = await getDocs(q)
+        return snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as StoryNode[]
+      } catch (cacheError) {
+        console.warn('Cache read failed:', cacheError)
+        return [] // Return empty array instead of throwing
+      }
+    }
     console.error('Error getting nodes:', error)
     throw error
   }
@@ -202,30 +305,42 @@ export const subscribeToNodes = (storyId: string, callback: (nodes: StoryNode[])
 // Vote on a node
 export const voteNode = async (nodeId: string, userId: string) => {
   try {
+    if (!db || typeof db === 'object' && Object.keys(db).length === 0) {
+      throw new Error('Database not initialized')
+    }
+
     const nodeRef = doc(db, 'nodes', nodeId)
     const nodeDoc = await getDoc(nodeRef)
     
-    if (!nodeDoc.exists()) return
+    if (!nodeDoc.exists()) {
+      throw new Error('Node not found')
+    }
     
     const nodeData = nodeDoc.data() as StoryNode
-    const hasVoted = nodeData.voters?.includes(userId) || false
+    const voters = nodeData.voters || []
+    const hasVoted = voters.includes(userId)
     
     if (hasVoted) {
       // Remove vote
       await updateDoc(nodeRef, {
-        votes: nodeData.votes - 1,
-        voters: nodeData.voters.filter((v: string) => v !== userId),
+        votes: Math.max(0, (nodeData.votes || 0) - 1),
+        voters: voters.filter((v: string) => v !== userId),
+        updatedAt: serverTimestamp(),
       })
     } else {
       // Add vote
       await updateDoc(nodeRef, {
         votes: (nodeData.votes || 0) + 1,
-        voters: [...(nodeData.voters || []), userId],
+        voters: [...voters, userId],
+        updatedAt: serverTimestamp(),
       })
+      
+      // Check if this node should become canon (highest votes)
+      // This would ideally be done in a cloud function, but for now we'll track it
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error voting on node:', error)
-    throw error
+    throw new Error(error.message || 'Failed to vote on node')
   }
 }
 

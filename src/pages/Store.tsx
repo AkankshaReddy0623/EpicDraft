@@ -1,18 +1,25 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
+import { useTheme } from '../context/ThemeContext'
 import { PowerItem } from '../types'
 
 export default function Store() {
   const { user, storeItems, purchaseItem, stats, inventory } = useApp()
+  const { setCustomTheme } = useTheme()
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [purchaseSuccess, setPurchaseSuccess] = useState<string | null>(null)
   const [activeBoosts, setActiveBoosts] = useState<Set<string>>(new Set())
+  const [appliedThemes, setAppliedThemes] = useState<Set<string>>(new Set())
+  const [appliedFonts, setAppliedFonts] = useState<string | null>(null)
 
-  const categories = ['all', ...new Set(storeItems.map(item => item.category))]
+  const categories = useMemo(() => ['all', ...new Set(storeItems.map(item => item.category))], [storeItems])
 
-  const filteredItems = selectedCategory === 'all' 
-    ? storeItems 
-    : storeItems.filter(item => item.category === selectedCategory)
+  const filteredItems = useMemo(() => 
+    selectedCategory === 'all' 
+      ? storeItems 
+      : storeItems.filter(item => item.category === selectedCategory),
+    [storeItems, selectedCategory]
+  )
 
   const handlePurchase = async (item: PowerItem) => {
     if (!user) {
@@ -25,18 +32,53 @@ export default function Store() {
       return
     }
 
-    const success = await purchaseItem(item)
-    if (success) {
-      setPurchaseSuccess(item.id)
-      setTimeout(() => setPurchaseSuccess(null), 2000)
-      
-      // Auto-activate entry boosts
-      if (item.effectType === 'entry-boost') {
-        setActiveBoosts(prev => new Set(prev).add(item.id))
-        alert(`${item.name} is now active!`)
+    try {
+      const success = await purchaseItem(item)
+      if (success) {
+        setPurchaseSuccess(item.id)
+        setTimeout(() => setPurchaseSuccess(null), 2000)
+        
+        // Auto-activate entry boosts
+        if (item.effectType === 'entry-boost') {
+          setActiveBoosts(prev => new Set(prev).add(item.id))
+        }
+        
+        // Auto-apply themes and fonts
+        if (item.category === 'Themes') {
+          setAppliedThemes(prev => new Set(prev).add(item.id))
+          // Actually apply the theme
+          const themeMap: Record<string, 'golden' | 'ocean' | 'forest'> = {
+            'cos1': 'golden',
+            'cos3': 'ocean',
+            'cos4': 'forest',
+          }
+          const themeName = themeMap[item.id]
+          if (themeName) {
+            setCustomTheme(themeName)
+            alert(`Theme "${item.name}" applied!`)
+          }
+        }
+        
+        if (item.category === 'Fonts') {
+          setAppliedFonts(item.id)
+          // Apply font to document
+          const fontMap: Record<string, string> = {
+            'cos7': 'serif',
+            'cos8': 'sans-serif',
+            'cos9': 'cursive',
+            'cos10': 'monospace',
+          }
+          const fontFamily = fontMap[item.id]
+          if (fontFamily) {
+            document.documentElement.style.setProperty('--font-family', fontFamily)
+            alert(`Font "${item.name}" applied!`)
+          }
+        }
+      } else {
+        alert('Failed to purchase item')
       }
-    } else {
-      alert('Failed to purchase item')
+    } catch (error: any) {
+      alert(error.message || 'Failed to purchase item')
     }
   }
 
@@ -113,14 +155,25 @@ export default function Store() {
       
       {/* Store Items Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredItems.map((item, index) => (
-          <div
-            key={item.id}
-            className={`card hover:shadow-lg transition-all duration-300 hover:scale-105 hover:border-gold group animate-slide-up ${
-              getRarityColor(item.rarity)
-            }`}
-            style={{ animationDelay: `${index * 0.1}s` }}
-          >
+        {filteredItems.map((item, index) => {
+          const hasItem = inventory.some(inv => inv.itemId === item.id && inv.quantity > 0)
+          const isTheme = item.category === 'Themes'
+          const isFont = item.category === 'Fonts'
+          const isApplied = isTheme ? appliedThemes.has(item.id) : isFont ? appliedFonts === item.id : false
+          
+          return (
+            <div
+              key={item.id}
+              className={`card hover:shadow-xl transition-all duration-300 hover:scale-105 hover:border-gold group animate-slide-up relative overflow-hidden ${
+                getRarityColor(item.rarity)
+              } ${hasItem ? 'ring-2 ring-gold' : ''}`}
+              style={{ animationDelay: `${index * 0.05}s` }}
+            >
+            {hasItem && (
+              <div className="absolute top-2 right-2 bg-gold text-white text-xs font-bold px-2 py-1 rounded-full animate-pulse-gold">
+                ✓ Owned
+              </div>
+            )}
             <div className="flex items-start justify-between mb-4">
               <div className="text-5xl group-hover:scale-110 transition-transform">
                 {item.icon || '🎁'}
@@ -151,31 +204,68 @@ export default function Store() {
                 >
                   ✓ Active
                 </button>
-              ) : inventory.some(inv => inv.itemId === item.id && inv.quantity > 0) ? (
+              ) : (isTheme || isFont) && isApplied ? (
                 <button
-                  onClick={() => handleActivateBoost(item.id)}
+                  disabled
+                  className="btn-primary text-sm bg-green-500 hover:bg-green-600 cursor-not-allowed"
+                >
+                  ✓ Applied
+                </button>
+              ) : hasItem ? (
+                <button
+                  onClick={() => {
+                    if (isTheme) {
+                      setAppliedThemes(prev => new Set(prev).add(item.id))
+                      const themeMap: Record<string, 'golden' | 'ocean' | 'forest'> = {
+                        'cos1': 'golden',
+                        'cos3': 'ocean',
+                        'cos4': 'forest',
+                      }
+                      const themeName = themeMap[item.id]
+                      if (themeName) {
+                        setCustomTheme(themeName)
+                        alert(`Theme "${item.name}" applied!`)
+                      }
+                    } else if (isFont) {
+                      setAppliedFonts(item.id)
+                      const fontMap: Record<string, string> = {
+                        'cos7': 'serif',
+                        'cos8': 'sans-serif',
+                        'cos9': 'cursive',
+                        'cos10': 'monospace',
+                      }
+                      const fontFamily = fontMap[item.id]
+                      if (fontFamily) {
+                        document.documentElement.style.setProperty('--font-family', fontFamily)
+                        alert(`Font "${item.name}" applied!`)
+                      }
+                    } else {
+                      handleActivateBoost(item.id)
+                    }
+                  }}
                   className="btn-primary text-sm bg-blue-500 hover:bg-blue-600"
                 >
-                  Activate
+                  {isTheme || isFont ? 'Apply' : 'Activate'}
                 </button>
               ) : (
                 <button
                   onClick={() => handlePurchase(item)}
                   disabled={!user || user.points < item.cost}
-                  className={`btn-primary text-sm ${
+                  className={`btn-primary text-sm transition-all ${
                     !user || user.points < item.cost
                       ? 'opacity-50 cursor-not-allowed'
                       : purchaseSuccess === item.id
-                      ? 'bg-green-500 hover:bg-green-600'
-                      : ''
+                      ? 'bg-green-500 hover:bg-green-600 animate-bounce-in'
+                      : 'hover:scale-105'
                   }`}
                 >
-                  {purchaseSuccess === item.id ? '✓ Purchased!' : 'Redeem'}
+                  {purchaseSuccess === item.id ? '✓ Purchased!' : `Redeem ${item.cost} pts`}
                 </button>
               )}
             </div>
-          </div>
-        ))}
+            </div>
+          )
+        })}
       </div>
 
       {filteredItems.length === 0 && (

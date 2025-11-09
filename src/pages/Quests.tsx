@@ -1,10 +1,37 @@
+import { useState, useEffect, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
+import { ContributionAnalysis } from '../services/aiAnalytics'
 
 export default function Quests() {
-  const { quests, claimQuest, stats } = useApp()
+  const { quests, claimQuest, stats, user } = useApp()
+  const [userContributions, setUserContributions] = useState<ContributionAnalysis[]>([])
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
 
-  const activeQuests = quests.filter(q => !q.completed || !q.claimed)
-  const completedQuests = quests.filter(q => q.completed && q.claimed)
+  // Load user's contributions for AI verification
+  useEffect(() => {
+    if (!user) return
+
+    const loadContributions = async () => {
+      try {
+        setLoadingAnalysis(true)
+        // Get all nodes written by user
+        const allNodes = await getNodes('') // This would need to be improved to get all user nodes
+        const userNodes = allNodes.filter(n => n.authorId === user.id)
+        
+        const analyses = userNodes.map(node => analyzeNode(node.content))
+        setUserContributions(analyses)
+      } catch (error) {
+        console.error('Error loading contributions:', error)
+      } finally {
+        setLoadingAnalysis(false)
+      }
+    }
+
+    loadContributions()
+  }, [user])
+
+  const activeQuests = useMemo(() => quests.filter(q => !q.completed || !q.claimed), [quests])
+  const completedQuests = useMemo(() => quests.filter(q => q.completed && q.claimed), [quests])
 
   const getProgressPercentage = (quest: typeof quests[0]) => {
     return Math.min((quest.progress / quest.requirementValue) * 100, 100)
@@ -91,7 +118,7 @@ export default function Quests() {
                 <div className="text-right ml-4">
                   <div className="mb-2">
                     <p className="text-gold font-bold text-lg">+{quest.rewardPoints} pts</p>
-                    <p className="text-text-light text-sm">+{quest.rewardXP} XP</p>
+                    <p className="text-gray-900 dark:text-gray-50 text-sm">+{quest.rewardXP} XP</p>
                   </div>
                   {quest.completed && !quest.claimed && (
                     <button

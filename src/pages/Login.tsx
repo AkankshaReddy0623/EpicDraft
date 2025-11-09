@@ -1,22 +1,31 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useApp } from '../context/AppContext'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function Login() {
-  const { signIn } = useApp()
+  const { signIn, user, loading: appLoading } = useApp()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user && !appLoading) {
+      navigate('/home')
+    }
+  }, [user, appLoading, navigate])
 
   const handleSignIn = async () => {
     try {
       setLoading(true)
       setError(null)
       await signIn()
-      navigate('/home')
+      // Wait a bit for auth state to update, then navigate
+      setTimeout(() => {
+        navigate('/home')
+      }, 500)
     } catch (err: any) {
       setError(err.message || 'Failed to sign in')
-    } finally {
       setLoading(false)
     }
   }

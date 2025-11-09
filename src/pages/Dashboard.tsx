@@ -20,8 +20,9 @@ export default function Dashboard() {
   const loadStories = async () => {
     try {
       setLoading(true)
-      const userStories = await getStories(user?.id)
-      setStories(userStories)
+      // Get all public stories, or user's stories if they want to see their own
+      const allStories = await getStories() // Get all public stories
+      setStories(allStories)
     } catch (error) {
       console.error('Error loading stories:', error)
     } finally {
@@ -117,23 +118,58 @@ export default function Dashboard() {
         <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">{nextLevelXP} XP to Level {stats.level + 1}</p>
       </div>
       
-      {/* My Stories */}
+      {/* All Stories */}
       <div className="mb-8">
-        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-50 mb-4">My Stories</h2>
+        <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-50 mb-4">
+          {user ? 'All Stories' : 'Public Stories'}
+        </h2>
         {stories.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {stories.map((story, index) => (
               <div
                 key={story.id}
-                className="card hover:shadow-lg transition-all hover:scale-105 cursor-pointer animate-slide-up"
+                className="card hover:shadow-lg transition-all hover:scale-105 animate-slide-up group"
                 style={{ animationDelay: `${index * 0.1}s` }}
-                onClick={() => navigate(`/room/${story.id}`)}
               >
-                <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-50 mb-2">{story.title}</h3>
+                <div className="flex items-start justify-between mb-2">
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-50 group-hover:text-gold transition-colors">{story.title}</h3>
+                  <span className={`text-xs px-2 py-1 rounded-full ${
+                    story.visibility === 'public' 
+                      ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' 
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-400'
+                  }`}>
+                    {story.visibility}
+                  </span>
+                </div>
                 <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">{story.genre}</p>
-                <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-                  <span>{story.nodeCount || 0} nodes</span>
-                  <span>{story.visibility}</span>
+                {story.description && (
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 line-clamp-2">{story.description}</p>
+                )}
+                <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 pt-3 border-t border-gray-200 dark:border-gray-700 mb-3">
+                  <span className="flex items-center gap-1">
+                    <span className="text-gold">📝</span>
+                    {story.nodeCount || 0} nodes
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="text-gold">👤</span>
+                    {story.ownerName}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => navigate(`/room/${story.id}/read`)}
+                    className="btn-secondary text-xs flex-1"
+                  >
+                    Read
+                  </button>
+                  {user && (
+                    <button
+                      onClick={() => navigate(`/room/${story.id}`)}
+                      className="btn-primary text-xs flex-1"
+                    >
+                      Contribute
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -160,11 +196,11 @@ export default function Dashboard() {
           </Link>
           <Link to="/quests" className="card bg-white dark:bg-gray-800 hover:shadow-md transition-all hover:scale-105 text-center">
             <div className="text-3xl mb-2">📋</div>
-            <p className="font-semibold text-text-light dark:text-text-dark">View Quests</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-50">View Quests</p>
           </Link>
           <Link to="/inventory" className="card bg-white dark:bg-gray-800 hover:shadow-md transition-all hover:scale-105 text-center">
             <div className="text-3xl mb-2">📦</div>
-            <p className="font-semibold text-text-light dark:text-text-dark">My Inventory</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-50">My Inventory</p>
           </Link>
         </div>
       </div>

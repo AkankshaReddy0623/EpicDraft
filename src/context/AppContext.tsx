@@ -41,9 +41,16 @@ const initialStoreItems: PowerItem[] = [
   { id: 'eb1', name: 'Feature Node', cost: 100, description: 'Highlight your node in the story graph', effectType: 'entry-boost', rarity: 'common', category: 'Entry Boosts', icon: '⭐' },
   { id: 'eb2', name: 'Vote Boost', cost: 50, description: 'Get extra votes for your next node', effectType: 'entry-boost', rarity: 'common', category: 'Entry Boosts', icon: '🚀' },
   { id: 'eb3', name: 'Extended Visibility', cost: 150, description: 'Extend visibility during voting period', effectType: 'entry-boost', rarity: 'rare', category: 'Entry Boosts', icon: '👁️' },
-  { id: 'cos1', name: 'Profile Theme', cost: 250, description: 'Unlock a custom theme for your profile', effectType: 'cosmetic', rarity: 'rare', category: 'Cosmetics', icon: '🎨' },
-  { id: 'cos2', name: 'Title Border', cost: 150, description: 'Add a golden border to your profile title', effectType: 'cosmetic', rarity: 'common', category: 'Cosmetics', icon: '✨' },
-  { id: 'cos3', name: 'Achievement Aura', cost: 500, description: 'Add a glowing aura around your name', effectType: 'cosmetic', rarity: 'epic', category: 'Cosmetics', icon: '🌟' },
+  { id: 'cos1', name: 'Golden Theme', cost: 300, description: 'Unlock golden theme for your profile', effectType: 'cosmetic', rarity: 'rare', category: 'Themes', icon: '🎨' },
+  { id: 'cos2', name: 'Dark Theme', cost: 250, description: 'Unlock dark theme variant', effectType: 'cosmetic', rarity: 'common', category: 'Themes', icon: '🌙' },
+  { id: 'cos3', name: 'Ocean Theme', cost: 400, description: 'Unlock ocean blue theme', effectType: 'cosmetic', rarity: 'rare', category: 'Themes', icon: '🌊' },
+  { id: 'cos4', name: 'Forest Theme', cost: 400, description: 'Unlock forest green theme', effectType: 'cosmetic', rarity: 'rare', category: 'Themes', icon: '🌲' },
+  { id: 'cos5', name: 'Title Border', cost: 150, description: 'Add a golden border to your profile title', effectType: 'cosmetic', rarity: 'common', category: 'Cosmetics', icon: '✨' },
+  { id: 'cos6', name: 'Achievement Aura', cost: 500, description: 'Add a glowing aura around your name', effectType: 'cosmetic', rarity: 'epic', category: 'Cosmetics', icon: '🌟' },
+  { id: 'cos7', name: 'Elegant Font', cost: 200, description: 'Unlock elegant serif font style', effectType: 'cosmetic', rarity: 'common', category: 'Fonts', icon: '✍️' },
+  { id: 'cos8', name: 'Modern Font', cost: 200, description: 'Unlock modern sans-serif font', effectType: 'cosmetic', rarity: 'common', category: 'Fonts', icon: '📝' },
+  { id: 'cos9', name: 'Handwriting Font', cost: 300, description: 'Unlock handwriting-style font', effectType: 'cosmetic', rarity: 'rare', category: 'Fonts', icon: '✏️' },
+  { id: 'cos10', name: 'Monospace Font', cost: 250, description: 'Unlock monospace code font', effectType: 'cosmetic', rarity: 'rare', category: 'Fonts', icon: '💻' },
   { id: 'mb1', name: 'Mystery Box', cost: 200, description: 'Random power card or item', effectType: 'mystery-box', rarity: 'rare', category: 'Mystery Boxes', icon: '🎁' },
 ]
 
@@ -102,28 +109,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
         clearTimeout(timeoutId)
         setFirebaseUser(firebaseUser)
         
-        if (firebaseUser) {
-          // Load user data from Firestore
-          try {
-            const userData = await getUserData(firebaseUser.uid)
-            if (userData && mounted) {
-              setUser({
-                id: userData.id,
-                name: userData.name,
-                email: userData.email,
-                avatar: userData.avatar,
-                points: userData.points || 0,
-                xp: userData.xp || 0,
-                level: userData.level || 1,
-                badges: userData.badges || [],
-                specialization: userData.specialization as SpecializationType,
-                streak: userData.streak || 0,
-                lastContributionDate: userData.lastContributionDate,
-                totalNodesWritten: userData.totalNodesWritten || 0,
-                totalVotesReceived: userData.totalVotesReceived || 0,
-                totalStoriesCreated: userData.totalStoriesCreated || 0,
-              })
-            } else if (mounted) {
+                if (firebaseUser) {
+                  // Check for daily login bonus
+                  const lastLogin = localStorage.getItem(`lastLogin_${firebaseUser.uid}`)
+                  const today = new Date().toISOString().split('T')[0]
+                  const hasDailyBonus = lastLogin !== today
+                  
+                  // Load user data from Firestore
+                  try {
+                    const userData = await getUserData(firebaseUser.uid)
+                    if (userData && mounted) {
+                      const user = {
+                        id: userData.id,
+                        name: userData.name,
+                        email: userData.email,
+                        avatar: userData.avatar,
+                        points: userData.points || 0,
+                        xp: userData.xp || 0,
+                        level: userData.level || 1,
+                        badges: userData.badges || [],
+                        specialization: userData.specialization as SpecializationType,
+                        streak: userData.streak || 0,
+                        lastContributionDate: userData.lastContributionDate,
+                        totalNodesWritten: userData.totalNodesWritten || 0,
+                        totalVotesReceived: userData.totalVotesReceived || 0,
+                        totalStoriesCreated: userData.totalStoriesCreated || 0,
+                      }
+                      setUser(user)
+                      
+                      // Award daily login bonus
+                      if (hasDailyBonus) {
+                        localStorage.setItem(`lastLogin_${firebaseUser.uid}`, today)
+                        // Award bonus points (will be updated after user is set)
+                        setTimeout(async () => {
+                          try {
+                            await updateUserPoints(user.id, 10) // +10 points daily bonus
+                            await updateUserXP(user.id, 15) // +15 XP daily bonus
+                            setUser({ ...user, points: (user.points || 0) + 10, xp: (user.xp || 0) + 15 })
+                          } catch (err) {
+                            console.warn('Failed to award daily bonus:', err)
+                          }
+                        }, 500)
+                      }
+                    } else if (mounted) {
               // Create new user
               try {
                 await setUserData(firebaseUser.uid, {
@@ -241,10 +269,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const signIn = async () => {
     try {
+      if (!isAuthInitialized) {
+        throw new Error('Firebase authentication is not initialized')
+      }
       const { signInWithPopup } = await import('firebase/auth')
       const { googleProvider } = await import('../config/firebase')
       const result = await signInWithPopup(auth, googleProvider)
       // User will be set by the auth state listener
+      // Wait a moment for the listener to update state
+      await new Promise(resolve => setTimeout(resolve, 300))
       return result
     } catch (error: any) {
       console.error('Error signing in:', error)
@@ -348,10 +381,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const updateQuestProgress = (questId: string, progress: number) => {
-    setQuests(quests.map(q => {
+    setQuests(prevQuests => prevQuests.map(q => {
       if (q.id === questId) {
-        const newProgress = Math.min(progress, q.requirementValue)
+        const newProgress = Math.min((q.progress || 0) + progress, q.requirementValue)
         const completed = newProgress >= q.requirementValue && !q.completed
+        if (completed && !q.completed) {
+          // Auto-complete quest when requirement is met
+          console.log(`Quest ${q.title} completed!`)
+        }
         return { ...q, progress: newProgress, completed: completed || q.completed }
       }
       return q
