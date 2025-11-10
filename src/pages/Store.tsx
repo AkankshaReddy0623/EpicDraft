@@ -1,16 +1,23 @@
 import { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext'
 import { useTheme } from '../context/ThemeContext'
+import { useToast } from '../components/ToastContainer'
 import { PowerItem } from '../types'
 
 export default function Store() {
   const { user, storeItems, purchaseItem, stats, inventory } = useApp()
   const { setCustomTheme } = useTheme()
+  const { showToast } = useToast()
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
   const [purchaseSuccess, setPurchaseSuccess] = useState<string | null>(null)
   const [activeBoosts, setActiveBoosts] = useState<Set<string>>(new Set())
-  const [appliedThemes, setAppliedThemes] = useState<Set<string>>(new Set())
-  const [appliedFonts, setAppliedFonts] = useState<string | null>(null)
+  const [appliedThemes, setAppliedThemes] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('appliedThemes')
+    return saved ? new Set(JSON.parse(saved)) : new Set()
+  })
+  const [appliedFonts, setAppliedFonts] = useState<string | null>(() => {
+    return localStorage.getItem('appliedFont') || null
+  })
 
   const categories = useMemo(() => ['all', ...new Set(storeItems.map(item => item.category))], [storeItems])
 
@@ -23,12 +30,12 @@ export default function Store() {
 
   const handlePurchase = async (item: PowerItem) => {
     if (!user) {
-      alert('Please sign in to purchase items')
+      showToast('Please sign in to purchase items', 'warning')
       return
     }
     
     if (user.points < item.cost) {
-      alert('Insufficient points!')
+      showToast('Insufficient points!', 'error')
       return
     }
 
@@ -43,9 +50,12 @@ export default function Store() {
           setActiveBoosts(prev => new Set(prev).add(item.id))
         }
         
-        // Auto-apply themes and fonts
+        // Auto-apply themes and fonts with persistence
         if (item.category === 'Themes') {
-          setAppliedThemes(prev => new Set(prev).add(item.id))
+          const newThemes = new Set(appliedThemes).add(item.id)
+          setAppliedThemes(newThemes)
+          localStorage.setItem('appliedThemes', JSON.stringify(Array.from(newThemes)))
+          
           // Actually apply the theme
           const themeMap: Record<string, 'golden' | 'ocean' | 'forest'> = {
             'cos1': 'golden',
@@ -55,12 +65,15 @@ export default function Store() {
           const themeName = themeMap[item.id]
           if (themeName) {
             setCustomTheme(themeName)
-            alert(`Theme "${item.name}" applied!`)
+            localStorage.setItem('customTheme', themeName)
+            showToast(`✅ Theme "${item.name}" applied and saved!`, 'success')
           }
         }
         
         if (item.category === 'Fonts') {
           setAppliedFonts(item.id)
+          localStorage.setItem('appliedFont', item.id)
+          
           // Apply font to document
           const fontMap: Record<string, string> = {
             'cos7': 'serif',
@@ -70,27 +83,33 @@ export default function Store() {
           }
           const fontFamily = fontMap[item.id]
           if (fontFamily) {
-            document.documentElement.style.setProperty('--font-family', fontFamily)
-            alert(`Font "${item.name}" applied!`)
+            document.documentElement.style.fontFamily = fontFamily
+            showToast(`✅ Font "${item.name}" applied and saved!`, 'success')
           }
         }
       } else {
-        alert('Failed to purchase item')
+        showToast('Failed to purchase item', 'error')
       }
     } catch (error: any) {
-      alert(error.message || 'Failed to purchase item')
+      // Handle offline errors gracefully
+      const errorMsg = error.message || 'Failed to purchase item'
+      if (errorMsg.includes('offline') || errorMsg.includes('client is offline')) {
+        showToast('You are offline. Please check your connection and try again.', 'warning', 4000)
+      } else {
+        showToast(errorMsg, 'error')
+      }
     }
   }
 
   const handleActivateBoost = (itemId: string) => {
     const hasItem = inventory.some(inv => inv.itemId === itemId && inv.quantity > 0)
     if (!hasItem) {
-      alert('You don\'t have this item in your inventory')
+      showToast('You don\'t have this item in your inventory', 'warning')
       return
     }
     
     setActiveBoosts(prev => new Set(prev).add(itemId))
-    alert('Boost activated!')
+    showToast('Boost activated!', 'success')
   }
 
   const isBoostActive = (itemId: string) => activeBoosts.has(itemId)
@@ -215,7 +234,10 @@ export default function Store() {
                 <button
                   onClick={() => {
                     if (isTheme) {
-                      setAppliedThemes(prev => new Set(prev).add(item.id))
+                      const newThemes = new Set(appliedThemes).add(item.id)
+                      setAppliedThemes(newThemes)
+                      localStorage.setItem('appliedThemes', JSON.stringify(Array.from(newThemes)))
+                      
                       const themeMap: Record<string, 'golden' | 'ocean' | 'forest'> = {
                         'cos1': 'golden',
                         'cos3': 'ocean',
@@ -224,10 +246,13 @@ export default function Store() {
                       const themeName = themeMap[item.id]
                       if (themeName) {
                         setCustomTheme(themeName)
-                        alert(`Theme "${item.name}" applied!`)
+                        localStorage.setItem('customTheme', themeName)
+                        showToast(`✅ Theme "${item.name}" applied!`, 'success')
                       }
                     } else if (isFont) {
                       setAppliedFonts(item.id)
+                      localStorage.setItem('appliedFont', item.id)
+                      
                       const fontMap: Record<string, string> = {
                         'cos7': 'serif',
                         'cos8': 'sans-serif',
@@ -236,8 +261,8 @@ export default function Store() {
                       }
                       const fontFamily = fontMap[item.id]
                       if (fontFamily) {
-                        document.documentElement.style.setProperty('--font-family', fontFamily)
-                        alert(`Font "${item.name}" applied!`)
+                        document.documentElement.style.fontFamily = fontFamily
+                        showToast(`✅ Font "${item.name}" applied!`, 'success')
                       }
                     } else {
                       handleActivateBoost(item.id)

@@ -1,6 +1,6 @@
-import { initializeApp } from "firebase/app"
-import { getAuth, GoogleAuthProvider } from "firebase/auth"
-import { getFirestore, enableIndexedDbPersistence } from "firebase/firestore"
+import { initializeApp } from 'firebase/app'
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth'
+import { getFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore'
 import { getAnalytics } from "firebase/analytics"
 
 const firebaseConfig = {
@@ -25,22 +25,40 @@ try {
   db = getFirestore(app)
   googleProvider = new GoogleAuthProvider()
   
-  // Enable offline persistence for better performance and offline support
-  if (typeof window !== 'undefined') {
-    enableIndexedDbPersistence(db).catch((err: any) => {
-      if (err.code === 'failed-precondition') {
-        console.warn('Multiple tabs open, persistence can only be enabled in one tab at a time.')
-      } else if (err.code === 'unimplemented') {
-        console.warn('The current browser does not support all of the features required for persistence')
-      } else {
-        console.warn('Persistence error:', err)
-      }
-    })
+  // Set auth persistence to LOCAL (survives browser restarts)
+  if (typeof window !== 'undefined' && auth) {
+    setPersistence(auth, browserLocalPersistence)
+      .then(() => {
+        console.log('✅ Auth persistence enabled (LOCAL)')
+      })
+      .catch((err: any) => {
+        console.warn('⚠️ Auth persistence warning:', err.message || err)
+      })
   }
   
-  console.log('Firebase initialized successfully')
+  // Enable offline persistence with improved error handling
+  if (typeof window !== 'undefined') {
+    // Try multi-tab first for better UX
+    enableMultiTabIndexedDbPersistence(db)
+      .then(() => {
+        console.log('✅ Offline persistence enabled (multi-tab)')
+      })
+      .catch((err: any) => {
+        if (err.code === 'failed-precondition') {
+          // Multiple tabs open - this is OK, data will still sync
+          console.log('ℹ️ Multiple tabs detected - persistence already enabled')
+        } else if (err.code === 'unimplemented') {
+          console.warn('⚠️ Browser does not support offline persistence')
+        } else {
+          console.warn('⚠️ Persistence setup warning:', err.message || err)
+        }
+        // Don't retry - let Firestore handle it automatically
+      })
+  }
+  
+  console.log('✅ Firebase initialized successfully')
 } catch (error) {
-  console.error('Firebase initialization error:', error)
+  console.error('❌ Firebase initialization error:', error)
   // Create minimal fallback objects to prevent crashes
   app = {} as any
   auth = {} as any

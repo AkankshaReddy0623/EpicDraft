@@ -1,34 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useApp } from '../context/AppContext'
-import { ContributionAnalysis } from '../services/aiAnalytics'
 
 export default function Quests() {
   const { quests, claimQuest, stats, user } = useApp()
-  const [userContributions, setUserContributions] = useState<ContributionAnalysis[]>([])
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
-
-  // Load user's contributions for AI verification
-  useEffect(() => {
-    if (!user) return
-
-    const loadContributions = async () => {
-      try {
-        setLoadingAnalysis(true)
-        // Get all nodes written by user
-        const allNodes = await getNodes('') // This would need to be improved to get all user nodes
-        const userNodes = allNodes.filter(n => n.authorId === user.id)
-        
-        const analyses = userNodes.map(node => analyzeNode(node.content))
-        setUserContributions(analyses)
-      } catch (error) {
-        console.error('Error loading contributions:', error)
-      } finally {
-        setLoadingAnalysis(false)
-      }
-    }
-
-    loadContributions()
-  }, [user])
 
   const activeQuests = useMemo(() => quests.filter(q => !q.completed || !q.claimed), [quests])
   const completedQuests = useMemo(() => quests.filter(q => q.completed && q.claimed), [quests])
@@ -43,6 +17,10 @@ export default function Quests() {
       case 'plot-twist': return '🎭'
       case 'upvoted-entry': return '👍'
       case 'streak': return '🔥'
+      case 'create-story': return '📖'
+      case 'vote': return '🗳️'
+      case 'read-story': return '📚'
+      case 'comment': return '💬'
       default: return '📋'
     }
   }

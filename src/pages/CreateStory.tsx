@@ -2,10 +2,12 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { useApp } from '../context/AppContext'
 import { createStory } from '../services/storyService'
+import { useToast } from '../components/ToastContainer'
 
 export default function CreateStory() {
-  const { user } = useApp()
+  const { user, addPoints, addXP, updateQuestProgress } = useApp()
   const navigate = useNavigate()
+  const { showToast } = useToast()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
@@ -43,9 +45,24 @@ export default function CreateStory() {
         contributors: [user.id],
       })
       
-      navigate(`/room/${storyId}`)
+      // Award points for creating a story
+      try {
+        await addPoints(30) // +30 points for creating a story
+        await addXP(40) // +40 XP for creating a story
+        updateQuestProgress('q6', 1) // Story Creator quest
+      } catch (pointsErr) {
+        console.warn('Failed to award points:', pointsErr)
+      }
+      
+      showToast(`Story "${formData.title}" created successfully! +30 points, +40 XP`, 'success', 4000)
+      
+      // Navigate after a short delay to show the toast
+      setTimeout(() => {
+        navigate(`/room/${storyId}`)
+      }, 500)
     } catch (err: any) {
       setError(err.message || 'Failed to create story')
+      showToast(err.message || 'Failed to create story', 'error')
     } finally {
       setLoading(false)
     }

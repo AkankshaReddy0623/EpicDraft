@@ -5,12 +5,13 @@ import { getStory, subscribeToStory, getNodes, subscribeToNodes, createNode, vot
 import { setPresence, removePresence } from '../services/presenceService'
 import { addNodeReaction } from '../services/nodeComments'
 import { analyzeNode } from '../services/aiAnalytics'
+import { useToast } from '../components/ToastContainer'
 import ReactFlow, { Node, Edge, Background, Controls, MiniMap } from 'reactflow'
 import ChatPanel from '../components/ChatPanel'
 import PresenceIndicator from '../components/PresenceIndicator'
 import AchievementPopup from '../components/AchievementPopup'
 import Confetti from '../components/Confetti'
-import AIDialogueHelper from '../components/AIDialogueHelper'
+import ImprovedAIHelper from '../components/ImprovedAIHelper'
 import NodeComments from '../components/NodeComments'
 import 'reactflow/dist/style.css'
 
@@ -18,6 +19,7 @@ export default function Room() {
   const { roomId } = useParams()
   const navigate = useNavigate()
   const { user, addPoints, addXP, updateStreak, inventory, updateQuestProgress } = useApp()
+  const { showToast } = useToast()
   const [story, setStory] = useState<any>(null)
   const [nodes, setNodes] = useState<StoryNode[]>([])
   const [nodeContent, setNodeContent] = useState('')
@@ -29,6 +31,130 @@ export default function Room() {
   const [reactFlowEdges, setReactFlowEdges] = useState<Edge[]>([])
   const [showAchievement, setShowAchievement] = useState<{title: string, description: string, points?: number} | null>(null)
   const [confettiTrigger, setConfettiTrigger] = useState(false)
+  const [activeTab, setActiveTab] = useState<'chat' | 'contributors' | 'voting'>('chat')
+
+  // Pre-calculate node analyses to avoid hooks in loops
+  const nodeAnalyses = useMemo(() => {
+    return nodes.reduce((acc, node) => {
+      if (node.id) {
+        acc[node.id] = analyzeNode(node.content)
+      }
+      return acc
+    }, {} as Record<string, any>)
+  }, [nodes])
+
+  // Update React Flow graph when nodes change with better hierarchical layout
+  const updateReactFlowGraph = useCallback((storyNodes: StoryNode[]) => {
+    if (storyNodes.length === 0) {
+      setReactFlowNodes([])
+      setReactFlowEdges([])
+      return
+    }
+
+    // Build a tree structure for better layout
+    const nodeMap = new Map<string, StoryNode>()
+    storyNodes.forEach(node => {
+      if (node.id) nodeMap.set(node.id, node)
+    })
+
+    // Find root nodes (no parent or parent doesn't exist)
+    const rootNodes = storyNodes.filter(n => !n.parentId || !nodeMap.has(n.parentId))
+    
+    // Calculate positions using hierarchical layout
+    const positions = new Map<string, { x: number; y: number }>()
+    const nodeLevels = new Map<string, number>()
+    const levelNodes = new Map<number, StoryNode[]>()
+    
+    // Calculate levels (depth from root) - root is level 0, children increase
+    const calculateLevel = (nodeId: string): number => {
+      if (nodeLevels.has(nodeId)) return nodeLevels.get(nodeId)!
+      
+      const node = nodeMap.get(nodeId)
+      if (!node) return 0
+      
+      // If no parent or parent doesn't exist, this is a root node (level 0)
+      if (!node.parentId || !nodeMap.has(node.parentId)) {
+        nodeLevels.set(nodeId, 0)
+        return 0
+      }
+      
+      // Children are one level below parent
+      const parentLevel = calculateLevel(node.parentId)
+      const myLevel = parentLevel + 1
+      nodeLevels.set(nodeId, myLevel)
+      return myLevel
+    }
+
+    storyNodes.forEach(node => {
+      if (node.id) {
+        const level = calculateLevel(node.id)
+        if (!levelNodes.has(level)) levelNodes.set(level, [])
+        levelNodes.get(level)!.push(node)
+      }
+    })
+
+    // Assign positions
+    levelNodes.forEach((nodes, level) => {
+      const y = level * 200 + 50
+      const spacing = 300
+      const startX = -(nodes.length - 1) * spacing / 2
+      nodes.forEach((node, index) => {
+        if (node.id) {
+          positions.set(node.id, {
+            x: startX + index * spacing,
+            y: y
+          })
+        }
+      })
+    })
+
+    const flowNodes: Node[] = storyNodes.map((node) => {
+      const pos = node.id ? positions.get(node.id) || { x: 0, y: 0 } : { x: 0, y: 0 }
+      return {
+        id: node.id || '',
+        type: 'default',
+        position: pos,
+        data: {
+          label: (
+            <div className="p-2 max-w-[200px]">
+              <div className="font-semibold mb-1 flex items-center gap-1">
+                {node.isCanon && <span>⭐</span>}
+                {node.authorName}
+              </div>
+              <div className="text-gray-600 dark:text-gray-400 line-clamp-2">{node.content.substring(0, 50)}...</div>
+              <div className="text-xs text-gray-500 mt-1">{node.votes} votes</div>
+            </div>
+          )
+        },
+        style: {
+          background: node.isCanon ? 'linear-gradient(135deg, #ffd700 0%, #ffed4e 100%)' : '#fff',
+          border: node.isCanon ? '2px solid #ffa500' : '1px solid #ddd',
+          borderRadius: '8px',
+          padding: '10px',
+          boxShadow: node.isCanon ? '0 4px 6px rgba(255, 215, 0, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
+        },
+      }
+    })
+
+    const flowEdges: Edge[] = storyNodes
+      .filter(node => node.parentId && node.id)
+      .map(node => ({
+        id: `e${node.parentId}-${node.id}`,
+        source: node.parentId || '',
+        target: node.id || '',
+        type: 'smoothstep',
+        animated: true,
+        style: {
+          stroke: node.isCanon ? '#D4AF37' : '#999',
+          strokeWidth: node.isCanon ? 3 : 2,
+        },
+        label: node.isCanon ? '⭐' : '',
+        labelStyle: { fill: '#D4AF37', fontWeight: 600 },
+      }))
+
+    setReactFlowNodes(flowNodes)
+    setReactFlowEdges(flowEdges)
+  }, [])
 
   // Set presence when entering room
   useEffect(() => {
@@ -122,122 +248,6 @@ export default function Room() {
     }
   }, [roomId, updateReactFlowGraph])
 
-  // Update React Flow graph when nodes change with better hierarchical layout
-  const updateReactFlowGraph = useCallback((storyNodes: StoryNode[]) => {
-    if (storyNodes.length === 0) {
-      setReactFlowNodes([])
-      setReactFlowEdges([])
-      setLoading(false)
-      return
-    }
-
-    // Build a tree structure for better layout
-    const nodeMap = new Map<string, StoryNode>()
-    storyNodes.forEach(node => {
-      if (node.id) nodeMap.set(node.id, node)
-    })
-
-    // Find root nodes (no parent or parent doesn't exist)
-    const rootNodes = storyNodes.filter(n => !n.parentId || !nodeMap.has(n.parentId))
-    
-    // Calculate positions using hierarchical layout
-    const positions = new Map<string, { x: number; y: number }>()
-    const nodeLevels = new Map<string, number>()
-    const levelNodes = new Map<number, StoryNode[]>()
-    
-    // Calculate levels (depth from root)
-    const calculateLevel = (nodeId: string, level: number = 0): number => {
-      if (nodeLevels.has(nodeId)) return nodeLevels.get(nodeId)!
-      const node = nodeMap.get(nodeId)
-      if (!node || !node.parentId || !nodeMap.has(node.parentId)) {
-        nodeLevels.set(nodeId, level)
-        return level
-      }
-      const parentLevel = calculateLevel(node.parentId, level + 1)
-      nodeLevels.set(nodeId, parentLevel)
-      return parentLevel
-    }
-
-    storyNodes.forEach(node => {
-      if (node.id) {
-        const level = calculateLevel(node.id)
-        if (!levelNodes.has(level)) levelNodes.set(level, [])
-        levelNodes.get(level)!.push(node)
-      }
-    })
-
-    // Assign positions
-    levelNodes.forEach((nodes, level) => {
-      const y = level * 200 + 50
-      const spacing = 300
-      const startX = -(nodes.length - 1) * spacing / 2
-      nodes.forEach((node, index) => {
-        if (node.id) {
-          positions.set(node.id, {
-            x: startX + index * spacing,
-            y: y
-          })
-        }
-      })
-    })
-
-    const flowNodes: Node[] = storyNodes.map((node) => {
-      const pos = node.id ? positions.get(node.id) || { x: 0, y: 0 } : { x: 0, y: 0 }
-      return {
-        id: node.id || '',
-        type: 'default',
-        position: pos,
-        data: {
-          label: (
-            <div className="p-2 max-w-[200px]">
-              <div className="text-xs font-semibold text-gold mb-1 truncate">
-                {node.authorName}
-              </div>
-              <div className="text-xs text-gray-600 dark:text-gray-400 line-clamp-3 mb-1">
-                {node.content.substring(0, 80)}...
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                {node.isCanon && (
-                  <span className="text-xs text-gold font-bold">⭐ Canon</span>
-                )}
-                <span className="text-xs text-gray-500">👍 {node.votes || 0}</span>
-              </div>
-            </div>
-          ),
-        },
-        style: {
-          background: node.isCanon ? '#D4AF37' : '#fff',
-          border: node.isCanon ? '2px solid #B8941F' : '1px solid #EAEAEA',
-          borderRadius: '8px',
-          minWidth: '200px',
-          maxWidth: '200px',
-          color: node.isCanon ? '#fff' : '#1A1A1A',
-          boxShadow: node.isCanon ? '0 4px 6px rgba(212, 175, 55, 0.3)' : '0 2px 4px rgba(0,0,0,0.1)',
-        },
-      }
-    })
-
-    const flowEdges: Edge[] = storyNodes
-      .filter(node => node.parentId && node.id)
-      .map(node => ({
-        id: `e${node.parentId}-${node.id}`,
-        source: node.parentId || '',
-        target: node.id || '',
-        type: 'smoothstep',
-        animated: true,
-        style: {
-          stroke: node.isCanon ? '#D4AF37' : '#999',
-          strokeWidth: node.isCanon ? 3 : 2,
-        },
-        label: node.isCanon ? '⭐' : '',
-        labelStyle: { fill: '#D4AF37', fontWeight: 600 },
-      }))
-
-    setReactFlowNodes(flowNodes)
-    setReactFlowEdges(flowEdges)
-    setLoading(false)
-  }, [])
-
   const handleSaveNode = async (isPlotTwist: boolean = false) => {
     if (!user || !roomId || !nodeContent.trim()) {
       setError('Please sign in and enter node content')
@@ -251,7 +261,9 @@ export default function Room() {
       // Validate content
       const trimmedContent = nodeContent.trim()
       if (trimmedContent.length < 10) {
-        setError('Node content must be at least 10 characters long')
+        const errorMsg = 'Node content must be at least 10 characters long'
+        setError(errorMsg)
+        showToast(errorMsg, 'error')
         setSaving(false)
         return
       }
@@ -269,14 +281,18 @@ export default function Room() {
         console.log('✅ Node created successfully:', nodeId)
       } catch (createError: any) {
         console.error('❌ Error creating node:', createError)
-        setError(createError.message || 'Failed to save node. Please check your connection and try again.')
+        const errorMsg = createError.message || 'Failed to save node. Please check your connection and try again.'
+        setError(errorMsg)
+        showToast(errorMsg, 'error')
         setSaving(false)
         return
       }
 
       // Verify node was created
       if (!nodeId) {
-        setError('Node creation failed - no ID returned')
+        const errorMsg = 'Node creation failed - no ID returned'
+        setError(errorMsg)
+        showToast(errorMsg, 'error')
         setSaving(false)
         return
       }
@@ -289,9 +305,29 @@ export default function Room() {
         console.warn('Failed to update user stats:', statsError)
       }
 
-      // Award points and XP
-      const pointsEarned = isPlotTwist ? 10 : 5
-      const xpEarned = isPlotTwist ? 15 : 10
+      // Award points and XP with specialization bonuses
+      let pointsEarned = isPlotTwist ? 10 : 5
+      let xpEarned = isPlotTwist ? 15 : 10
+      
+      // Apply specialization bonuses (+50% XP for matching content)
+      let bonusApplied = false
+      if (user.specialization) {
+        const content = trimmedContent.toLowerCase()
+        
+        if (user.specialization === 'plot-master' && isPlotTwist) {
+          xpEarned = Math.floor(xpEarned * 1.5)
+          bonusApplied = true
+        } else if (user.specialization === 'dialogue-whisperer' && (content.includes('"') || content.includes("'"))) {
+          xpEarned = Math.floor(xpEarned * 1.5)
+          bonusApplied = true
+        } else if (user.specialization === 'world-builder' && content.length > 200) {
+          xpEarned = Math.floor(xpEarned * 1.5)
+          bonusApplied = true
+        } else if (user.specialization === 'character-crafter' && /\b(he|she|they|character|person)\b/i.test(content)) {
+          xpEarned = Math.floor(xpEarned * 1.5)
+          bonusApplied = true
+        }
+      }
       
       const oldLevel = user.level || 1
       const currentXP = user.xp || 0
@@ -321,12 +357,19 @@ export default function Room() {
         })
         setConfettiTrigger(true)
         setTimeout(() => setConfettiTrigger(false), 3000)
+        showToast(`🎉 Level Up! You've reached Level ${newLevel}!`, 'achievement', 4000)
       } else {
         setShowAchievement({
           title: isPlotTwist ? 'Plot Twist Added!' : 'Node Saved!',
           description: `+${pointsEarned} points, +${xpEarned} XP`,
           points: pointsEarned
         })
+        const bonusText = bonusApplied ? ' 🌟 Specialization Bonus!' : ''
+        showToast(
+          `${isPlotTwist ? '🎭 Plot Twist Added!' : '✅ Node Saved!'} +${pointsEarned} points, +${xpEarned} XP${bonusText}`,
+          'success',
+          3000
+        )
       }
 
       setNodeContent('')
@@ -339,7 +382,7 @@ export default function Room() {
     }
   }
 
-  const handleVote = async (nodeId: string) => {
+  const handleVote = useCallback(async (nodeId: string) => {
     if (!user || !roomId) return
     try {
       const node = nodes.find(n => n.id === nodeId)
@@ -351,14 +394,15 @@ export default function Room() {
       if (!hadVoted) {
         await addPoints(2) // +2 points for voting
         await addXP(3) // +3 XP for voting
+        updateQuestProgress('q3', 1) // Popular Writer quest
+        updateQuestProgress('q7', 1) // Active Voter quest
+        showToast('Vote recorded! +2 points, +3 XP', 'success', 2000)
       }
-      
-      // Update quest progress for "Popular Writer" if voting on someone else's node
-      // Quest progress is tracked automatically in AppContext
     } catch (err: any) {
       setError(err.message || 'Failed to vote')
+      showToast(err.message || 'Failed to vote', 'error')
     }
-  }
+  }, [user, roomId, nodes, addPoints, addXP, updateQuestProgress])
 
   if (loading) {
     return (
@@ -405,7 +449,7 @@ export default function Room() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-50">{story?.title || 'Story Room'}</h1>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              {story?.genre} • {nodes.length} nodes • {story?.visibility}
+              {story?.genre} • {story?.nodeCount || nodes.length} nodes • {story?.visibility}
             </p>
           </div>
           {roomId && user && <PresenceIndicator storyId={roomId} currentUserId={user.id} />}
@@ -474,14 +518,14 @@ export default function Room() {
                     onChange={(e) => setSelectedParentId(e.target.value || null)}
                   >
                     <option value="">Start new branch (root level)</option>
-                    {nodes.filter(n => n.isCanon).map(node => (
+                    {nodes.map(node => (
                       <option key={node.id} value={node.id}>
-                        {node.content.substring(0, 50)}... by {node.authorName}
+                        {node.isCanon ? '⭐ ' : ''}{node.content.substring(0, 50)}... by {node.authorName}
                       </option>
                     ))}
                   </select>
                   <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                    💡 Only canon nodes are shown. Select a parent to create a branch from that point.
+                    💡 Select any node to branch from that point. Canon nodes are marked with ⭐
                   </p>
                 </div>
               )}
@@ -498,11 +542,11 @@ export default function Room() {
                 />
                 <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
                   <span>{nodeContent.length} characters</span>
-                  <AIDialogueHelper
-                    storyContent={story?.description || ''}
+                  <ImprovedAIHelper
+                    storyContent={story?.description || story?.starterPrompt || ''}
                     currentNodeContent={nodeContent}
-                    onInsertDialogue={(dialogue) => {
-                      setNodeContent(prev => prev + '\n\n' + dialogue)
+                    onInsertSuggestion={(text: string) => {
+                      setNodeContent(prev => prev + '\n\n' + text)
                     }}
                   />
                 </div>
@@ -538,7 +582,7 @@ export default function Room() {
                 </h3>
                 <div className="space-y-4">
                   {nodes.map((node) => {
-                    const nodeAnalysis = useMemo(() => analyzeNode(node.content), [node.content])
+                    const nodeAnalysis = node.id ? nodeAnalyses[node.id] : { wordCount: 0, qualityScore: 0 }
                     return (
                       <div
                         key={node.id}
@@ -591,6 +635,9 @@ export default function Room() {
                                     if (node.id && user) {
                                       try {
                                         await addNodeReaction(node.id, user.id, emoji)
+                                        // Award points for reacting (+1 point, +2 XP)
+                                        await addPoints(1)
+                                        await addXP(2)
                                       } catch (err) {
                                         console.error('Error adding reaction:', err)
                                       }
@@ -625,45 +672,106 @@ export default function Room() {
           </div>
         </div>
         
-        {/* Right: Sidebar */}
+        {/* Right: Sidebar with Tabs */}
         <div className="w-80 bg-white dark:bg-gray-900 overflow-y-auto border-l border-gray-200 dark:border-gray-700 transition-colors duration-300">
-          <div className="p-4 space-y-6">
-            <div className="h-[500px]">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
-                <span>💬</span> Chat
-              </h3>
-              {roomId && <ChatPanel storyId={roomId} />}
+          <div className="p-4">
+            {/* Tabs */}
+            <div className="flex gap-1 mb-4 border-b border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`px-3 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === 'chat'
+                    ? 'text-gold border-b-2 border-gold -mb-[2px]'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-50'
+                }`}
+              >
+                💬 Chat
+              </button>
+              <button
+                onClick={() => setActiveTab('contributors')}
+                className={`px-3 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === 'contributors'
+                    ? 'text-gold border-b-2 border-gold -mb-[2px]'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-50'
+                }`}
+              >
+                👥 Contributors
+              </button>
+              <button
+                onClick={() => setActiveTab('voting')}
+                className={`px-3 py-2 text-sm font-semibold transition-colors ${
+                  activeTab === 'voting'
+                    ? 'text-gold border-b-2 border-gold -mb-[2px]'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-50'
+                }`}
+              >
+                🗳️ Info
+              </button>
             </div>
-            
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
-                <span>👥</span> Contributors
-              </h3>
-              <div className="space-y-2">
-                {story?.contributors && story.contributors.length > 0 ? (
-                  <div className="card bg-gray-50 dark:bg-gray-800">
-                    <p className="text-gray-600 dark:text-gray-400 text-sm">
-                      {story.contributors.length} contributor(s)
+
+            {/* Tab Content */}
+            <div className="min-h-[500px]">
+              {activeTab === 'chat' && (
+                <div className="animate-fade-in">
+                  {roomId && <ChatPanel storyId={roomId} />}
+                </div>
+              )}
+              
+              {activeTab === 'contributors' && (
+                <div className="animate-fade-in space-y-3">
+                  {story?.contributors && story.contributors.length > 0 ? (
+                    <>
+                      <div className="card bg-gradient-to-br from-gold/10 to-gold-light/10 border-gold/30">
+                        <p className="text-gray-900 dark:text-gray-50 font-semibold mb-1">
+                          {story.contributors.length} Contributor{story.contributors.length !== 1 ? 's' : ''}
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          Owner: <span className="font-semibold text-gold">{story.ownerName}</span>
+                        </p>
+                      </div>
+                      <div className="card bg-gray-50 dark:bg-gray-800">
+                        <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">Story Stats:</p>
+                        <div className="space-y-1 text-sm">
+                          <p className="text-gray-700 dark:text-gray-300">📝 {story.nodeCount || 0} nodes</p>
+                          <p className="text-gray-700 dark:text-gray-300">🌳 {nodes.length} total branches</p>
+                          <p className="text-gray-700 dark:text-gray-300">⭐ {nodes.filter(n => n.isCanon).length} canon</p>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-8">No contributors yet</p>
+                  )}
+                </div>
+              )}
+              
+              {activeTab === 'voting' && (
+                <div className="animate-fade-in">
+                  <div className="card bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20">
+                    <h4 className="font-semibold text-gray-900 dark:text-gray-50 mb-3">How Voting Works</h4>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm mb-4">
+                      Vote on nodes to make them canon. The most voted branch becomes the main story path.
                     </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
-                      Owner: {story.ownerName}
-                    </p>
+                    <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-3">
+                      <li className="flex items-start gap-2">
+                        <span className="text-gold text-lg">⭐</span>
+                        <span>Canon nodes are marked with a gold star</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-gold text-lg">👍</span>
+                        <span>Click thumbs up to vote for a node</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-gold text-lg">🎯</span>
+                        <span>Earn +2 points and +3 XP per vote</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-gold text-lg">🏆</span>
+                        <span>Most voted nodes become canon</span>
+                      </li>
+                    </ul>
                   </div>
-                ) : (
-                  <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-4">No contributors yet</p>
-                )}
-              </div>
-            </div>
-            
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-50 mb-4 flex items-center gap-2">
-                <span>🗳️</span> Voting
-              </h3>
-              <div className="card bg-gray-50 dark:bg-gray-800">
-                <p className="text-gray-600 dark:text-gray-400 text-sm text-center py-4">
-                  Vote on nodes to make them canon. The most voted branch becomes the main story path.
-                </p>
-              </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

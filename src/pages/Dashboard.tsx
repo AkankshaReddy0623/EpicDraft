@@ -1,7 +1,11 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useApp } from '../context/AppContext'
-import { getStories, Story } from '../services/storyService'
+import { getStories, Story, subscribeToStory } from '../services/storyService'
+
+// Cache stories in memory for faster subsequent loads
+let storiesCache: { data: Story[], timestamp: number } | null = null
+const CACHE_DURATION = 60000 // 60 seconds
 
 export default function Dashboard() {
   const { user, stats, quests, loading: appLoading } = useApp()
@@ -17,14 +21,72 @@ export default function Dashboard() {
     }
   }, [user, appLoading])
 
+  // Subscribe to story updates for real-time node count
+  useEffect(() => {
+    if (!user || stories.length === 0) return
+    
+    // Create stable dependency from story IDs
+    const storyIds = stories.slice(0, 5).map(s => s.id).filter(Boolean).join(',')
+    if (!storyIds) return
+    
+    // Subscribe to first 5 stories for real-time updates
+    const unsubscribes: (() => void)[] = []
+    
+    stories.slice(0, 5).forEach(story => {
+      if (!story.id) return
+      
+      const unsub = subscribeToStory(story.id, (updatedStory) => {
+        if (updatedStory) {
+          setStories(prev => prev.map(s => 
+            s.id === updatedStory.id ? updatedStory : s
+          ))
+          // Invalidate cache when story updates
+          storiesCache = null
+        }
+      })
+      
+      unsubscribes.push(unsub)
+    })
+
+    return () => {
+      unsubscribes.forEach(unsub => unsub())
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, stories.slice(0, 5).map(s => s.id).join(',')])
+
   const loadStories = async () => {
     try {
+      // Check cache first for instant load
+      if (storiesCache && Date.now() - storiesCache.timestamp < CACHE_DURATION) {
+        console.log('📦 Using cached stories')
+        setStories(storiesCache.data)
+        setLoading(false)
+        return
+      }
+
       setLoading(true)
-      // Get all public stories, or user's stories if they want to see their own
-      const allStories = await getStories() // Get all public stories
-      setStories(allStories)
-    } catch (error) {
+      // Get limited number of stories for faster load (top 20 most recent)
+      // Use limit in query for better performance
+      const limitedStories = await getStories(undefined, 20) // Limit in Firestore query
+      
+      // Cache the results
+      storiesCache = { data: limitedStories, timestamp: Date.now() }
+      setStories(limitedStories)
+    } catch (error: any) {
       console.error('Error loading stories:', error)
+      // Don't break the UI on offline errors
+      if (error.message?.includes('offline') || error.code === 'unavailable') {
+        console.warn('⚠️ Offline mode - stories may be limited')
+        // Try to use stale cache if available
+        if (storiesCache) {
+          console.log('📦 Using stale cache due to offline mode')
+          setStories(storiesCache.data)
+        }
+      }
+      // Set empty array on error to prevent UI crash
+      if (!storiesCache) {
+        setStories([])
+      }
     } finally {
       setLoading(false)
     }
@@ -34,7 +96,8 @@ export default function Dashboard() {
   const nextLevelXP = (stats.level * 100) - stats.xp
   const xpProgress = (stats.xp % 100) / 100
 
-  if (appLoading || loading) {
+  // Show UI immediately, only show spinner for initial app load
+  if (appLoading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="text-center py-16">
@@ -122,8 +185,24 @@ export default function Dashboard() {
       <div className="mb-8">
         <h2 className="text-2xl font-semibold text-gray-900 dark:text-gray-50 mb-4">
           {user ? 'All Stories' : 'Public Stories'}
+          {loading && <span className="text-sm text-gray-500 ml-2">(Loading...)</span>}
         </h2>
-        {stories.length > 0 ? (
+        {loading && stories.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="card animate-pulse">
+                <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded mb-2"></div>
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-3"></div>
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded mb-2"></div>
+                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-2/3 mb-3"></div>
+                <div className="flex gap-2">
+                  <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded flex-1"></div>
+                  <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded flex-1"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : stories.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {stories.map((story, index) => (
               <div

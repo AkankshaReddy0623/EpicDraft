@@ -54,7 +54,7 @@ export interface Quest {
   description: string
   rewardPoints: number
   rewardXP: number
-  requirementType: 'write-node' | 'plot-twist' | 'upvoted-entry' | 'streak' | 'character-appears' | 'custom'
+  requirementType: 'write-node' | 'plot-twist' | 'upvoted-entry' | 'streak' | 'character-appears' | 'custom' | 'create-story' | 'vote' | 'read-story' | 'comment'
   requirementValue: number
   completed: boolean
   claimed: boolean

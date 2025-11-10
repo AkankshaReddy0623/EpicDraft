@@ -118,6 +118,33 @@ export const updateUserXP = async (userId: string, xp: number) => {
   }
 }
 
+// Update user stats (incremental)
+export const updateUserStats = async (userId: string, stats: Partial<Record<'totalNodesWritten' | 'totalVotesReceived' | 'totalStoriesCreated', number>>) => {
+  try {
+    const userRef = doc(db, 'users', userId)
+    const updates: any = { updatedAt: serverTimestamp() }
+    
+    // Increment stats
+    if (stats.totalNodesWritten) updates.totalNodesWritten = stats.totalNodesWritten
+    if (stats.totalVotesReceived) updates.totalVotesReceived = stats.totalVotesReceived
+    if (stats.totalStoriesCreated) updates.totalStoriesCreated = stats.totalStoriesCreated
+    
+    const userDoc = await getDoc(userRef)
+    if (userDoc.exists()) {
+      const currentData = userDoc.data()
+      await updateDoc(userRef, {
+        totalNodesWritten: (currentData.totalNodesWritten || 0) + (stats.totalNodesWritten || 0),
+        totalVotesReceived: (currentData.totalVotesReceived || 0) + (stats.totalVotesReceived || 0),
+        totalStoriesCreated: (currentData.totalStoriesCreated || 0) + (stats.totalStoriesCreated || 0),
+        updatedAt: serverTimestamp(),
+      })
+    }
+  } catch (error) {
+    console.error('Error updating user stats:', error)
+    throw error
+  }
+}
+
 // Get leaderboard
 export const getLeaderboard = async (limit: number = 10) => {
   try {

@@ -9,10 +9,17 @@ import {
   query, 
   where, 
   orderBy,
+  limit,
   onSnapshot,
-  serverTimestamp
+  serverTimestamp,
+  increment
 } from 'firebase/firestore'
 import { db } from '../config/firebase'
+
+// Simple in-memory cache to reduce Firestore reads
+const storyCache = new Map<string, { data: Story, timestamp: number }>()
+const nodesCache = new Map<string, { data: StoryNode[], timestamp: number }>()
+const CACHE_DURATION = 30000 // 30 seconds
 
 export interface StoryNode {
   id?: string
@@ -111,25 +118,39 @@ export const createStory = async (storyData: Omit<Story, 'id' | 'createdAt' | 'u
   }
 }
 
-// Get all stories
-export const getStories = async (userId?: string) => {
+// Get all stories with optional limit for performance
+export const getStories = async (userId?: string, limitCount?: number) => {
   try {
     let q
     
     if (userId) {
       // Get user's stories (both public and private)
-      q = query(
-        collection(db, 'stories'),
-        where('ownerId', '==', userId),
-        orderBy('updatedAt', 'desc')
-      )
+      q = limitCount
+        ? query(
+            collection(db, 'stories'),
+            where('ownerId', '==', userId),
+            orderBy('updatedAt', 'desc'),
+            limit(limitCount)
+          )
+        : query(
+            collection(db, 'stories'),
+            where('ownerId', '==', userId),
+            orderBy('updatedAt', 'desc')
+          )
     } else {
-      // Get all public stories
-      q = query(
-        collection(db, 'stories'),
-        where('visibility', '==', 'public'),
-        orderBy('updatedAt', 'desc')
-      )
+      // Get all public stories with optional limit
+      q = limitCount
+        ? query(
+            collection(db, 'stories'),
+            where('visibility', '==', 'public'),
+            orderBy('updatedAt', 'desc'),
+            limit(limitCount)
+          )
+        : query(
+            collection(db, 'stories'),
+            where('visibility', '==', 'public'),
+            orderBy('updatedAt', 'desc')
+          )
     }
     
     const snapshot = await getDocs(q)
@@ -143,19 +164,34 @@ export const getStories = async (userId?: string) => {
   }
 }
 
-// Get a single story with offline support
+// Get a single story with offline support and caching
 export const getStory = async (storyId: string) => {
   try {
+    // Check cache first
+    const cached = storyCache.get(storyId)
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+      console.log('📦 Using cached story data')
+      return cached.data
+    }
+
     const storyDoc = await getDoc(doc(db, 'stories', storyId))
     if (storyDoc.exists()) {
-      return { id: storyDoc.id, ...storyDoc.data() } as Story
+      const story = { id: storyDoc.id, ...storyDoc.data() } as Story
+      // Cache the result
+      storyCache.set(storyId, { data: story, timestamp: Date.now() })
+      return story
     }
     return null
   } catch (error: any) {
     // Handle offline errors gracefully
-    if (error.code === 'unavailable' || error.message?.includes('offline')) {
-      console.warn('Offline mode - attempting to use cached data')
-      // Try to get from cache
+    if (error.code === 'unavailable' || error.message?.includes('offline') || error.message?.includes('client is offline')) {
+      console.warn('⚠️ Operating in offline mode - using cached/local data')
+      // Return cached data if available
+      const cached = storyCache.get(storyId)
+      if (cached) {
+        return cached.data
+      }
+      // Try to get from Firestore cache
       try {
         const storyDoc = await getDoc(doc(db, 'stories', storyId))
         if (storyDoc.exists()) {
@@ -231,10 +267,14 @@ export const createNode = async (nodeData: Omit<StoryNode, 'id' | 'createdAt' | 
         : [...contributors, nodeData.authorId]
       
       await updateDoc(storyRef, {
-        nodeCount: nodesSnapshot.size + 1,
+        nodeCount: increment(1),
         contributors: updatedContributors,
         updatedAt: serverTimestamp(),
       })
+      
+      // Invalidate cache
+      storyCache.delete(nodeData.storyId)
+      nodesCache.delete(nodeData.storyId)
       
       console.log('✅ Story updated with new node count')
     }
@@ -246,24 +286,40 @@ export const createNode = async (nodeData: Omit<StoryNode, 'id' | 'createdAt' | 
   }
 }
 
-// Get nodes for a story with offline support
+// Get nodes for a story with offline support and caching
 export const getNodes = async (storyId: string) => {
   try {
+    // Check cache first
+    const cached = nodesCache.get(storyId)
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+      console.log('📦 Using cached nodes data')
+      return cached.data
+    }
+
     const q = query(
       collection(db, 'nodes'),
       where('storyId', '==', storyId),
       orderBy('order', 'asc')
     )
     const snapshot = await getDocs(q)
-    return snapshot.docs.map(doc => ({
+    const nodes = snapshot.docs.map(doc => ({
       id: doc.id,
       ...doc.data(),
     })) as StoryNode[]
+    
+    // Cache the result
+    nodesCache.set(storyId, { data: nodes, timestamp: Date.now() })
+    return nodes
   } catch (error: any) {
     // Handle offline errors gracefully
-    if (error.code === 'unavailable' || error.message?.includes('offline')) {
-      console.warn('Offline mode - attempting to use cached data')
-      // Try to get from cache
+    if (error.code === 'unavailable' || error.message?.includes('offline') || error.message?.includes('client is offline')) {
+      console.warn('⚠️ Operating in offline mode - using cached/local data')
+      // Return cached data if available
+      const cached = nodesCache.get(storyId)
+      if (cached) {
+        return cached.data
+      }
+      // Try to get from Firestore cache
       try {
         const q = query(
           collection(db, 'nodes'),

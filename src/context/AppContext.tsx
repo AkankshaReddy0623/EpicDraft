@@ -59,6 +59,12 @@ const initialQuests: Quest[] = [
   { id: 'q2', title: 'Plot Twister', description: 'Add a plot twist to a story', rewardPoints: 15, rewardXP: 30, requirementType: 'plot-twist', requirementValue: 1, completed: false, claimed: false, progress: 0 },
   { id: 'q3', title: 'Popular Writer', description: 'Get 5 upvotes on your entries', rewardPoints: 25, rewardXP: 50, requirementType: 'upvoted-entry', requirementValue: 5, completed: false, claimed: false, progress: 0 },
   { id: 'q4', title: 'Week Warrior', description: 'Maintain a 7-day streak', rewardPoints: 50, rewardXP: 100, requirementType: 'streak', requirementValue: 7, completed: false, claimed: false, progress: 0 },
+  { id: 'q5', title: 'Prolific Writer', description: 'Write 10 story nodes', rewardPoints: 50, rewardXP: 75, requirementType: 'write-node', requirementValue: 10, completed: false, claimed: false, progress: 0 },
+  { id: 'q6', title: 'Story Creator', description: 'Create 3 new stories', rewardPoints: 75, rewardXP: 100, requirementType: 'create-story', requirementValue: 3, completed: false, claimed: false, progress: 0 },
+  { id: 'q7', title: 'Active Voter', description: 'Vote on 20 story nodes', rewardPoints: 30, rewardXP: 40, requirementType: 'vote', requirementValue: 20, completed: false, claimed: false, progress: 0 },
+  { id: 'q8', title: 'Story Explorer', description: 'Read 5 different stories', rewardPoints: 20, rewardXP: 30, requirementType: 'read-story', requirementValue: 5, completed: false, claimed: false, progress: 0 },
+  { id: 'q9', title: 'Community Engager', description: 'Comment on 10 nodes', rewardPoints: 25, rewardXP: 35, requirementType: 'comment', requirementValue: 10, completed: false, claimed: false, progress: 0 },
+  { id: 'q10', title: 'Master Storyteller', description: 'Write 50 story nodes', rewardPoints: 200, rewardXP: 300, requirementType: 'write-node', requirementValue: 50, completed: false, claimed: false, progress: 0 },
 ]
 
 const initialBadges: Badge[] = [
@@ -80,13 +86,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true
     
-    // Set a timeout to stop loading after 2 seconds even if Firebase doesn't respond
+    // Set a shorter timeout for faster initial load (500ms)
     const timeoutId = setTimeout(() => {
       if (mounted) {
         console.warn('Firebase auth timeout - continuing without auth')
         setLoading(false)
       }
-    }, 2000)
+    }, 500) // Reduced to 500ms for faster loading
     
     // Wrap in try-catch to prevent crashes
     let unsubscribe: (() => void) | null = null
@@ -107,6 +113,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!mounted) return
         
         clearTimeout(timeoutId)
+        console.log('🔐 Auth state changed:', firebaseUser ? `User: ${firebaseUser.email}` : 'No user')
         setFirebaseUser(firebaseUser)
         
                 if (firebaseUser) {
@@ -135,6 +142,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         totalVotesReceived: userData.totalVotesReceived || 0,
                         totalStoriesCreated: userData.totalStoriesCreated || 0,
                       }
+                      console.log('✅ User data loaded:', user.name, user.email)
                       setUser(user)
                       
                       // Award daily login bonus
@@ -143,9 +151,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         // Award bonus points (will be updated after user is set)
                         setTimeout(async () => {
                           try {
-                            await updateUserPoints(user.id, 10) // +10 points daily bonus
-                            await updateUserXP(user.id, 15) // +15 XP daily bonus
-                            setUser({ ...user, points: (user.points || 0) + 10, xp: (user.xp || 0) + 15 })
+                            await updateUserPoints(user.id, 20) // +20 points daily bonus (increased)
+                            await updateUserXP(user.id, 25) // +25 XP daily bonus (increased)
+                            setUser({ ...user, points: (user.points || 0) + 20, xp: (user.xp || 0) + 25 })
+                            console.log('\u2705 Daily login bonus awarded: +20 points, +25 XP')
                           } catch (err) {
                             console.warn('Failed to award daily bonus:', err)
                           }
@@ -380,19 +389,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
     ))
   }
 
-  const updateQuestProgress = (questId: string, progress: number) => {
-    setQuests(prevQuests => prevQuests.map(q => {
-      if (q.id === questId) {
-        const newProgress = Math.min((q.progress || 0) + progress, q.requirementValue)
-        const completed = newProgress >= q.requirementValue && !q.completed
-        if (completed && !q.completed) {
-          // Auto-complete quest when requirement is met
-          console.log(`Quest ${q.title} completed!`)
+  const updateQuestProgress = async (questId: string, progress: number) => {
+    if (!user) return
+    
+    setQuests(prevQuests => {
+      const updatedQuests = prevQuests.map(q => {
+        if (q.id === questId) {
+          const newProgress = Math.min((q.progress || 0) + progress, q.requirementValue)
+          const completed = newProgress >= q.requirementValue
+          
+          if (completed && !q.completed) {
+            console.log(`✅ Quest ${q.title} completed!`)
+          }
+          
+          return { ...q, progress: newProgress, completed: completed || q.completed }
         }
-        return { ...q, progress: newProgress, completed: completed || q.completed }
+        return q
+      })
+      
+      // Save to Firestore
+      const questToUpdate = updatedQuests.find(q => q.id === questId)
+      if (questToUpdate && user) {
+        setUserData(user.id, { 
+          quests: updatedQuests 
+        }).catch(err => {
+          console.error('Failed to save quest progress:', err)
+        })
       }
-      return q
-    }))
+      
+      return updatedQuests
+    })
   }
 
   const setSpecialization = async (spec: SpecializationType) => {

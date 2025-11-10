@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useApp } from '../context/AppContext'
-import { subscribeToComments, addComment, addCommentReaction, deleteComment, NodeComment } from '../services/nodeComments'
+import { subscribeToComments, addComment as addCommentToDb, Comment } from '../services/commentService'
+import { useToast } from './ToastContainer'
 
 interface NodeCommentsProps {
   nodeId: string
@@ -10,8 +11,9 @@ interface NodeCommentsProps {
 const REACTIONS = ['👍', '❤️', '🎉', '🔥', '💡', '👏']
 
 export default function NodeComments({ nodeId, storyId }: NodeCommentsProps) {
-  const { user, addPoints, addXP } = useApp()
-  const [comments, setComments] = useState<NodeComment[]>([])
+  const { user, addPoints, addXP, updateQuestProgress } = useApp()
+  const { showToast } = useToast()
+  const [comments, setComments] = useState<Comment[]>([])
   const [newComment, setNewComment] = useState('')
   const [loading, setLoading] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -39,19 +41,20 @@ export default function NodeComments({ nodeId, storyId }: NodeCommentsProps) {
 
     try {
       setLoading(true)
-      await addComment(
+      await addCommentToDb({
         nodeId,
         storyId,
-        user.id,
-        user.name,
-        user.avatar,
-        newComment
-      )
+        userId: user.id,
+        userName: user.name,
+        content: newComment
+      })
       setNewComment('')
       
       // Award points for commenting
-      await addPoints(3) // +3 points for commenting
-      await addXP(5) // +5 XP for commenting
+      await addPoints(3)
+      await addXP(5)
+      updateQuestProgress('q9', 1) // Community Engager quest
+      showToast('Comment added! +3 pts, +5 XP', 'success')
     } catch (error) {
       console.error('Error adding comment:', error)
     } finally {
@@ -59,26 +62,7 @@ export default function NodeComments({ nodeId, storyId }: NodeCommentsProps) {
     }
   }
 
-  const handleReaction = async (commentId: string, emoji: string) => {
-    if (!user) return
-    try {
-      await addCommentReaction(commentId, nodeId, user.id, emoji)
-      // Award points for reacting
-      await addPoints(1) // +1 point for reacting
-      await addXP(2) // +2 XP for reacting
-    } catch (error) {
-      console.error('Error adding reaction:', error)
-    }
-  }
-
-  const handleDelete = async (commentId: string) => {
-    if (!user) return
-    try {
-      await deleteComment(nodeId, commentId, user.id)
-    } catch (error) {
-      console.error('Error deleting comment:', error)
-    }
-  }
+  // Simplified - no reactions or delete for now
 
   if (!expanded) {
     return (
@@ -116,54 +100,17 @@ export default function NodeComments({ nodeId, storyId }: NodeCommentsProps) {
               key={comment.id}
               className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 animate-scale-in"
             >
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  {comment.userAvatar ? (
-                    <img
-                      src={comment.userAvatar}
-                      alt={comment.userName}
-                      className="w-6 h-6 rounded-full"
-                    />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-gold flex items-center justify-center text-white text-xs font-bold">
-                      {comment.userName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <span className="text-xs font-semibold text-gray-900 dark:text-gray-50">
-                    {comment.userName}
-                  </span>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded-full bg-gold flex items-center justify-center text-white text-xs font-bold">
+                  {comment.userName.charAt(0).toUpperCase()}
                 </div>
-                {comment.userId === user?.id && (
-                  <button
-                    onClick={() => comment.id && handleDelete(comment.id)}
-                    className="text-xs text-red-500 hover:text-red-700"
-                  >
-                    Delete
-                  </button>
-                )}
+                <span className="text-xs font-semibold text-gray-900 dark:text-gray-50">
+                  {comment.userName}
+                </span>
               </div>
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-2 whitespace-pre-wrap">
+              <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
                 {comment.content}
               </p>
-              <div className="flex items-center gap-2 flex-wrap">
-                {REACTIONS.map((emoji) => {
-                  const users = comment.reactions?.[emoji] || []
-                  const hasReacted = users.includes(user?.id || '')
-                  return (
-                    <button
-                      key={emoji}
-                      onClick={() => comment.id && handleReaction(comment.id, emoji)}
-                      className={`text-xs px-2 py-1 rounded-full transition-all ${
-                        hasReacted
-                          ? 'bg-gold text-white'
-                          : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gold/20'
-                      }`}
-                    >
-                      {emoji} {users.length > 0 && users.length}
-                    </button>
-                  )
-                })}
-              </div>
             </div>
           ))
         )}

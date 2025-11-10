@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { useApp } from '../context/AppContext'
 import { SpecializationType } from '../types'
+import { useToast } from '../components/ToastContainer'
 import StoryHistory from '../components/StoryHistory'
 
 export default function Profile() {
   const { user, stats, badges, setSpecialization } = useApp()
+  const { showToast } = useToast()
   const [showSpecializationModal, setShowSpecializationModal] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   if (!user) {
     return (
@@ -33,13 +36,17 @@ export default function Profile() {
 
   const handleSpecializationSelect = async (spec: SpecializationType) => {
     try {
+      setLoading(true)
       await setSpecialization(spec)
       setShowSpecializationModal(false)
-      // Show success message
-      alert(`Specialization set to ${specializations.find(s => s.type === spec)?.name}!`)
-    } catch (error) {
+      const specName = specializations.find(s => s.type === spec)?.name
+      showToast(`✅ Specialization set to ${specName}!`, 'success')
+    } catch (error: any) {
       console.error('Error setting specialization:', error)
-      alert('Failed to set specialization. Please try again.')
+      const errorMsg = error?.message || 'Failed to set specialization. Please try again.'
+      showToast(errorMsg, 'error')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -204,7 +211,7 @@ export default function Profile() {
       {/* Specialization Modal */}
       {showSpecializationModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4 animate-bounce-in">
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 animate-bounce-in shadow-2xl">
             <h3 className="text-2xl font-bold text-gray-900 dark:text-gray-50 mb-4">Choose Specialization</h3>
             <div className="space-y-3 mb-6">
               {specializations.map((spec) => (

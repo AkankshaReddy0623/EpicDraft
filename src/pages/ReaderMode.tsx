@@ -30,15 +30,22 @@ export default function ReaderMode() {
         const storyNodes = await getNodes(roomId)
         setNodes(storyNodes)
         
-        // Find the root node (no parent) and set it as starting point
-        const rootNode = storyNodes.find(n => !n.parentId && n.isCanon)
-        if (rootNode) {
-          setCurrentPath([rootNode.id || ''])
+        // Find the root node (no parent) - prefer canon, fallback to any root
+        const rootNode = storyNodes.find(n => !n.parentId && n.isCanon) || 
+                         storyNodes.find(n => !n.parentId)
+        if (rootNode && rootNode.id) {
+          setCurrentPath([rootNode.id])
         }
         
         setLoading(false)
       } catch (err: any) {
-        setError(err.message || 'Failed to load story')
+        // Handle offline errors gracefully
+        if (err.message?.includes('offline') || err.code === 'unavailable') {
+          console.warn('⚠️ Offline mode - using cached data')
+          setError(null) // Don't show error, try to use cached data
+        } else {
+          setError(err.message || 'Failed to load story')
+        }
         setLoading(false)
       }
     }
@@ -53,7 +60,14 @@ export default function ReaderMode() {
   }
 
   const getChildNodes = (nodeId: string): StoryNode[] => {
-    return nodes.filter(n => n.parentId === nodeId && n.isCanon)
+    // Prefer canon children, but show all if no canon exists
+    const canonChildren = nodes.filter(n => n.parentId === nodeId && n.isCanon)
+    if (canonChildren.length > 0) {
+      return canonChildren.sort((a, b) => (b.votes || 0) - (a.votes || 0)) // Sort by votes
+    }
+    // No canon children, show all children sorted by votes
+    return nodes.filter(n => n.parentId === nodeId)
+                .sort((a, b) => (b.votes || 0) - (a.votes || 0))
   }
 
   const navigateToNode = (nodeId: string) => {
@@ -67,9 +81,10 @@ export default function ReaderMode() {
   }
 
   const resetStory = () => {
-    const rootNode = nodes.find(n => !n.parentId && n.isCanon)
-    if (rootNode) {
-      setCurrentPath([rootNode.id || ''])
+    const rootNode = nodes.find(n => !n.parentId && n.isCanon) || 
+                     nodes.find(n => !n.parentId)
+    if (rootNode && rootNode.id) {
+      setCurrentPath([rootNode.id])
     }
   }
 
@@ -110,13 +125,15 @@ export default function ReaderMode() {
             <p className="text-gray-600 dark:text-gray-400">{story.genre} • {nodes.length} nodes</p>
           </div>
           <div className="flex gap-3">
-            <Link to={`/room/${roomId}`} className="btn-secondary whitespace-nowrap">
-              Edit Mode
-            </Link>
             {user && (
-              <button onClick={() => navigate(`/room/${roomId}`)} className="btn-primary whitespace-nowrap">
-                Contribute
-              </button>
+              <Link to={`/room/${roomId}`} className="btn-primary whitespace-nowrap">
+                ✍️ Add Your Branch
+              </Link>
+            )}
+            {!user && (
+              <Link to="/login" className="btn-primary whitespace-nowrap">
+                Sign In to Contribute
+              </Link>
             )}
           </div>
         </div>
